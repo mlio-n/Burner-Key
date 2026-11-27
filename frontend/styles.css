@@ -1538,3 +1538,120 @@ body.is-resizing * {
 .ev.info p {
   color: var(--term-mute);
 }
+
+/* ---------- Live HTTPS Tunnel topbar indicator ---------- */
+
+.tunnel-cell {
+  gap: 7px;
+  border-top: 0;
+  border-right: 0;
+  border-bottom: 0;
+  background: transparent;
+  color: var(--fg);
+  text-transform: none;
+  letter-spacing: 0.02em;
+  max-width: 310px;
+}
+
+.tunnel-cell:hover {
+  background: var(--hover);
+}
+
+#tunnelStatusText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tunnel-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--line);
+  background: var(--mute-2);
+}
+
+.tunnel-dot.is-https {
+  border-color: #16a34a;
+  background: #22c55e;
+}
+
+/* ---------- 3-Row Copyable Key / Base URL / Endpoint Reveal ---------- */
+
+.reveal-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.reveal-row {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--faint);
+  background: var(--panel);
+}
+
+.reveal-row:last-child {
+  border-bottom: 0;
+}
+
+.reveal-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--fg);
+}
+
+.reveal-meta .muted {
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
+
+.reveal-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  border: 1px solid var(--line);
+  background: var(--field);
+}
+
+.reveal-code {
+  min-width: 0;
+  padding: 5px 7px;
+  font-size: 11px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: all;
+}
+
+.reveal-code:hover {
+  background: var(--hover);
+}
+
+.reveal-copy {
+  padding: 0 9px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.reveal-copy:hover {
+  background: var(--fill);
+  color: var(--on-fill);
+}
+
+.reveal-copy.is-copied {
+  background: var(--red);
+  color: var(--on-red);
+}

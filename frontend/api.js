@@ -3,8 +3,14 @@
  * Works both when served from FastAPI (:8000) and standalone static server (:5173, Live Server).
  */
 
+const isLocalHost =
+  window.location.hostname === "127.0.0.1" ||
+  window.location.hostname === "localhost";
+
 export const API_BASE =
-  window.location.port === "8000" ? "" : "http://127.0.0.1:8000";
+  !isLocalHost || window.location.port === "8000"
+    ? ""
+    : "http://127.0.0.1:8000";
 
 async function requestJson(path, options = {}) {
   const res = await fetch(`${API_BASE}${path}`, {

@@ -7,6 +7,7 @@
 import {
   createKey,
   createMasterKey,
+  fetchHealth,
   fetchKeys,
   fetchLogs,
   fetchMasterKeys,
@@ -69,6 +70,7 @@ const state = {
   liveVault: "new", // "new" = key typed into the form, otherwise a saved master key id
   vaults: [],
   providers: [],
+  publicUrl: "http://127.0.0.1:8000",
 };
 
 const rowSigs = new Map();
@@ -257,9 +259,30 @@ function renderShell(root) {
               <span>TEK SEFERLİK · ŞİMDİ KOPYALA</span>
               <button id="closeBannerBtn" type="button" aria-label="Kapat">×</button>
             </div>
-            <code id="newKeyValue" class="reveal-key"></code>
+            <div class="reveal-rows">
+              <div class="reveal-row">
+                <div class="reveal-meta"><span>API KEY</span></div>
+                <div class="reveal-line">
+                  <code id="newKeyValue" class="reveal-code" title="Kopyalamak için tıkla"></code>
+                  <button id="copyNewKeyBtn" class="reveal-copy" type="button" data-copy-kind="key">KOPYALA</button>
+                </div>
+              </div>
+              <div class="reveal-row">
+                <div class="reveal-meta"><span>BASE URL</span><span class="muted">Chatbox / Cursor / Cline</span></div>
+                <div class="reveal-line">
+                  <code id="revealBaseUrlVal" class="reveal-code" title="Kopyalamak için tıkla"></code>
+                  <button class="reveal-copy" type="button" data-copy-kind="base">KOPYALA</button>
+                </div>
+              </div>
+              <div class="reveal-row">
+                <div class="reveal-meta"><span>ENDPOINT</span><span class="muted">BetterGPT vb.</span></div>
+                <div class="reveal-line">
+                  <code id="revealEndpointVal" class="reveal-code" title="Kopyalamak için tıkla"></code>
+                  <button class="reveal-copy" type="button" data-copy-kind="endpoint">KOPYALA</button>
+                </div>
+              </div>
+            </div>
             <div class="seg full">
-              <button id="copyNewKeyBtn" type="button">Kopyala</button>
               <button id="sendToSimBtn" type="button">Simülatöre →</button>
             </div>
           </section>
@@ -790,10 +813,65 @@ export async function initDashboard() {
     return master.id;
   }
 
+  function getCleanPublicUrl() {
+    return String(state.publicUrl || "http://127.0.0.1:8000").replace(/\/+$/, "");
+  }
+
+  function syncPublicUrlUI() {
+    const base = getCleanPublicUrl();
+    const isHttps = base.startsWith("https://");
+
+    const baseEl = document.getElementById("revealBaseUrlVal");
+    const epEl = document.getElementById("revealEndpointVal");
+    if (baseEl) baseEl.textContent = `${base}/v1`;
+    if (epEl) epEl.textContent = `${base}/v1/chat/completions`;
+
+    const tunnelBtn = document.getElementById("tunnelStatusBtn");
+    const tunnelDot = document.getElementById("tunnelDot");
+    const tunnelText = document.getElementById("tunnelStatusText");
+    if (tunnelBtn && tunnelDot && tunnelText) {
+      tunnelDot.classList.toggle("is-https", isHttps);
+      if (tunnelBtn.dataset.copiedLock !== "1") {
+        tunnelText.textContent = isHttps
+          ? `HTTPS · ${base.replace(/^https:\/\//, "")}`
+          : base;
+      }
+      tunnelBtn.title = isHttps
+        ? `Canlı HTTPS Tüneli: ${base} (kopyalamak için tıkla)`
+        : `Yerel Proxy: ${base} (tünel bekleniyor · kopyalamak için tıkla)`;
+    }
+  }
+
+  async function copyText(value) {
+    if (!value) return false;
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = value;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      ta.remove();
+      return ok;
+    }
+  }
+
   async function refresh() {
     try {
-      const [keys, logs] = await Promise.all([fetchKeys(), fetchLogs(30)]);
+      const [keys, logs, health] = await Promise.all([
+        fetchKeys(),
+        fetchLogs(30),
+        fetchHealth().catch(() => null),
+      ]);
       state.keys = keys;
+      if (health?.public_url) {
+        state.publicUrl = health.public_url;
+      }
+      syncPublicUrlUI();
       renderKeys();
       renderLogs(logs);
     } catch (err) {
@@ -832,6 +910,7 @@ export async function initDashboard() {
       latestCreatedKey = created.api_key;
       state.rawKeys.set(created.id, created.api_key);
       document.getElementById("newKeyValue").textContent = latestCreatedKey;
+      syncPublicUrlUI();
       document.getElementById("newKeyBanner").hidden = false;
       selectKeyInSimulator(latestCreatedKey);
       await refresh();
@@ -844,17 +923,50 @@ export async function initDashboard() {
     }
   });
 
-  document.getElementById("copyNewKeyBtn").addEventListener("click", async (e) => {
-    if (!latestCreatedKey) return;
-    const btn = e.currentTarget;
-    try {
-      await navigator.clipboard.writeText(latestCreatedKey);
-      btn.textContent = "Kopyalandı";
-    } catch {
-      btn.textContent = "Kopyalanamadı";
+  document.getElementById("newKeyBanner").addEventListener("click", async (e) => {
+    const row = e.target.closest(".reveal-row");
+    if (!row) return;
+    if (!e.target.closest(".reveal-copy") && !e.target.closest(".reveal-code")) return;
+
+    const btn = row.querySelector(".reveal-copy");
+    const kind = btn?.dataset.copyKind;
+    const base = getCleanPublicUrl();
+    const targetValue =
+      kind === "key"
+        ? latestCreatedKey
+        : kind === "base"
+          ? `${base}/v1`
+          : `${base}/v1/chat/completions`;
+
+    if (!targetValue) return;
+    const ok = await copyText(targetValue);
+    if (btn) {
+      clearTimeout(btn._copyTimer);
+      btn.textContent = ok ? "KOPYALANDI ✓" : "HATA";
+      btn.classList.toggle("is-copied", ok);
+      btn._copyTimer = setTimeout(() => {
+        btn.textContent = "KOPYALA";
+        btn.classList.remove("is-copied");
+      }, 1500);
     }
-    setTimeout(() => (btn.textContent = "Kopyala"), 1500);
   });
+
+  const tunnelBtnEl = document.getElementById("tunnelStatusBtn");
+  if (tunnelBtnEl) {
+    tunnelBtnEl.addEventListener("click", async () => {
+      const base = getCleanPublicUrl();
+      const ok = await copyText(base);
+      const textEl = document.getElementById("tunnelStatusText");
+      if (!textEl) return;
+      clearTimeout(tunnelBtnEl._copyTimer);
+      tunnelBtnEl.dataset.copiedLock = "1";
+      textEl.textContent = ok ? "KOPYALANDI ✓" : "KOPYALANAMADI";
+      tunnelBtnEl._copyTimer = setTimeout(() => {
+        delete tunnelBtnEl.dataset.copiedLock;
+        syncPublicUrlUI();
+      }, 1500);
+    });
+  }
 
   document.getElementById("sendToSimBtn").addEventListener("click", () => {
     if (!latestCreatedKey) return;
@@ -919,6 +1031,7 @@ export async function initDashboard() {
 
   window.addEventListener("burner:activity", refresh);
 
+  syncPublicUrlUI();
   await Promise.all([loadProviders(), loadVaults()]);
   await refresh();
   setInterval(refresh, 2000);
