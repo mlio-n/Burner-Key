@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import json
+import re
 import time
 import uuid
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Iterator
 
 import httpx
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from keys import add_spend, check_key, get_upstream_target, release_reservation
+from keys import add_spend, check_key, get_db, get_upstream_target, release_reservation
+from pricing import SUPPORTED_MODELS
 
 router = APIRouter(tags=["proxy"])
 
@@ -207,7 +211,105 @@ def _anthropic_resp_to_openai(data: dict[str, Any], model: str) -> dict[str, Any
     }
 
 
-async def _handle_proxy_request(request: Request, caller_protocol: str) -> JSONResponse:
+def _chunk_text(text: str) -> list[str]:
+    """Split text into small word+whitespace chunks for smooth SSE streaming."""
+    if not text:
+        return []
+    return re.findall(r"\S+\s*|\s+", text)
+
+
+def _iter_openai_sse(
+    final_body: dict[str, Any], include_usage: bool = False
+) -> Iterator[str]:
+    """Yield OpenAI-compatible Server-Sent Events from a completed response."""
+    chunk_id = final_body.get("id") or f"chatcmpl-{uuid.uuid4().hex[:12]}"
+    created = int(final_body.get("created") or time.time())
+    model = final_body.get("model") or ""
+    choices = final_body.get("choices") or []
+    content = ""
+    if choices:
+        content = _flatten_content((choices[0].get("message") or {}).get("content"))
+
+    base = {
+        "id": chunk_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+    }
+
+    yield f"data: {json.dumps({**base, 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': ''}, 'finish_reason': None}]})}\n\n"
+    for piece in _chunk_text(content):
+        yield f"data: {json.dumps({**base, 'choices': [{'index': 0, 'delta': {'content': piece}, 'finish_reason': None}]})}\n\n"
+    yield f"data: {json.dumps({**base, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]})}\n\n"
+
+    if include_usage and final_body.get("usage"):
+        yield f"data: {json.dumps({**base, 'choices': [], 'usage': final_body['usage']})}\n\n"
+
+    yield "data: [DONE]\n\n"
+
+
+def _iter_anthropic_sse(final_body: dict[str, Any]) -> Iterator[str]:
+    """Yield Anthropic-compatible Server-Sent Events from a completed response."""
+    msg_id = final_body.get("id") or f"msg_{uuid.uuid4().hex[:16]}"
+    model = final_body.get("model") or ""
+    usage = final_body.get("usage") or {}
+    in_tok = int(usage.get("input_tokens", 0))
+    out_tok = int(usage.get("output_tokens", 0))
+
+    blocks = final_body.get("content") or []
+    text = "\n".join(
+        str(b.get("text", "")) for b in blocks if isinstance(b, dict) and b.get("text")
+    )
+
+    def _evt(name: str, payload: dict[str, Any]) -> str:
+        return f"event: {name}\ndata: {json.dumps(payload)}\n\n"
+
+    yield _evt(
+        "message_start",
+        {
+            "type": "message_start",
+            "message": {
+                "id": msg_id,
+                "type": "message",
+                "role": "assistant",
+                "model": model,
+                "content": [],
+                "stop_reason": None,
+                "stop_sequence": None,
+                "usage": {"input_tokens": in_tok, "output_tokens": 0},
+            },
+        },
+    )
+    yield _evt(
+        "content_block_start",
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "text", "text": ""},
+        },
+    )
+    for piece in _chunk_text(text):
+        yield _evt(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": piece},
+            },
+        )
+    yield _evt("content_block_stop", {"type": "content_block_stop", "index": 0})
+    yield _evt(
+        "message_delta",
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+            "usage": {"output_tokens": out_tok},
+        },
+    )
+    yield _evt("message_stop", {"type": "message_stop"})
+
+
+async def _handle_proxy_request(request: Request, caller_protocol: str) -> Response:
     try:
         body: dict[str, Any] = await request.json()
     except Exception:
@@ -215,13 +317,9 @@ async def _handle_proxy_request(request: Request, caller_protocol: str) -> JSONR
             caller_protocol, 400, "invalid_request_error", "Request body must be valid JSON."
         )
 
-    if body.get("stream") is True:
-        return _protocol_error(
-            caller_protocol,
-            400,
-            "invalid_request_error",
-            "Streaming (stream=true) is not supported in this MVP. Set stream=false.",
-        )
+    want_stream = body.get("stream") is True
+    stream_opts = body.get("stream_options")
+    include_usage = isinstance(stream_opts, dict) and bool(stream_opts.get("include_usage"))
 
     model = str(body.get("model") or "").strip()
     if not model:
@@ -248,6 +346,7 @@ async def _handle_proxy_request(request: Request, caller_protocol: str) -> JSONR
     upstream_key = target["api_key"]
 
     if not upstream_key and provider != "custom":
+        release_reservation(key_id)
         return _protocol_error(
             caller_protocol, 500, "api_error", "Master API key is empty for this vault."
         )
@@ -260,7 +359,7 @@ async def _handle_proxy_request(request: Request, caller_protocol: str) -> JSONR
             "content-type": "application/json",
         }
         forward_body = (
-            body if caller_protocol == "anthropic" else _openai_to_anthropic_body(body)
+            dict(body) if caller_protocol == "anthropic" else _openai_to_anthropic_body(body)
         )
     else:
         upstream_url = _build_openai_url(base_url, provider)
@@ -269,10 +368,11 @@ async def _handle_proxy_request(request: Request, caller_protocol: str) -> JSONR
             "content-type": "application/json",
         }
         forward_body = (
-            body if caller_protocol == "openai" else _anthropic_to_openai_body(body)
+            dict(body) if caller_protocol == "openai" else _anthropic_to_openai_body(body)
         )
 
     forward_body["stream"] = False
+    forward_body.pop("stream_options", None)
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -330,16 +430,80 @@ async def _handle_proxy_request(request: Request, caller_protocol: str) -> JSONR
         )
 
     add_spend(key_id, model, input_tokens, output_tokens)
+
+    if want_stream:
+        stream_gen = (
+            _iter_openai_sse(final_body, include_usage=include_usage)
+            if caller_protocol == "openai"
+            else _iter_anthropic_sse(final_body)
+        )
+        return StreamingResponse(
+            stream_gen,
+            status_code=200,
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     return JSONResponse(status_code=200, content=final_body)
 
 
+@router.get("/v1/models")
+def list_burner_models(request: Request) -> JSONResponse:
+    """OpenAI-compatible /v1/models listing allowed models for the caller's Burner Key."""
+    burner_key = _extract_burner_key(request)
+    if burner_key:
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT allowed_models, expires_at, is_revoked FROM burner_keys WHERE api_key = ?",
+                (burner_key,),
+            ).fetchone()
+
+        if not row or bool(row["is_revoked"]):
+            return _protocol_error(
+                "openai", 401, "authentication_error", "Invalid or revoked burner API key."
+            )
+
+        expires_at = datetime.fromisoformat(row["expires_at"])
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) >= expires_at:
+            return _protocol_error(
+                "openai", 401, "authentication_error", "Burner key has expired."
+            )
+
+        allowed = json.loads(row["allowed_models"])
+        models = list(SUPPORTED_MODELS) if "*" in allowed else allowed
+    else:
+        models = list(SUPPORTED_MODELS)
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "object": "list",
+            "data": [
+                {
+                    "id": m,
+                    "object": "model",
+                    "created": 1700000000,
+                    "owned_by": "burner-key",
+                }
+                for m in models
+            ],
+        },
+    )
+
+
 @router.post("/v1/messages")
-async def proxy_anthropic_messages(request: Request) -> JSONResponse:
+async def proxy_anthropic_messages(request: Request) -> Response:
     """Anthropic-compatible /v1/messages proxy endpoint (routes to any Master Key)."""
     return await _handle_proxy_request(request, caller_protocol="anthropic")
 
 
 @router.post("/v1/chat/completions")
-async def proxy_openai_chat_completions(request: Request) -> JSONResponse:
+async def proxy_openai_chat_completions(request: Request) -> Response:
     """OpenAI-compatible /v1/chat/completions proxy endpoint (routes to any Master Key)."""
     return await _handle_proxy_request(request, caller_protocol="openai")
