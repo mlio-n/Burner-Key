@@ -309,6 +309,23 @@ def _iter_anthropic_sse(final_body: dict[str, Any]) -> Iterator[str]:
     yield _evt("message_stop", {"type": "message_stop"})
 
 
+COMPAT_OPENAI_MODELS: tuple[str, ...] = ("gpt-4o-mini", "gpt-4o")
+
+
+def _resolve_gemini_target_model(key_id: int) -> str:
+    """Pick the first allowed gemini-* model for this key, or fall back to gemini-2.0-flash."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT allowed_models FROM burner_keys WHERE id = ?", (key_id,)
+        ).fetchone()
+    if row:
+        allowed = json.loads(row["allowed_models"])
+        for candidate in allowed:
+            if isinstance(candidate, str) and candidate.startswith("gemini-"):
+                return candidate
+    return "gemini-2.0-flash"
+
+
 async def _handle_proxy_request(request: Request, caller_protocol: str) -> Response:
     try:
         body: dict[str, Any] = await request.json()
@@ -321,14 +338,14 @@ async def _handle_proxy_request(request: Request, caller_protocol: str) -> Respo
     stream_opts = body.get("stream_options")
     include_usage = isinstance(stream_opts, dict) and bool(stream_opts.get("include_usage"))
 
-    model = str(body.get("model") or "").strip()
-    if not model:
+    requested_model = str(body.get("model") or "").strip()
+    if not requested_model:
         return _protocol_error(
             caller_protocol, 400, "invalid_request_error", "Field 'model' is required."
         )
 
     burner_key = _extract_burner_key(request)
-    key_id, err_status, err_msg = check_key(burner_key, model)
+    key_id, err_status, err_msg = check_key(burner_key, requested_model)
     if err_status is not None or key_id is None:
         err_type = {
             401: "authentication_error",
@@ -351,6 +368,12 @@ async def _handle_proxy_request(request: Request, caller_protocol: str) -> Respo
             caller_protocol, 500, "api_error", "Master API key is empty for this vault."
         )
 
+    upstream_model = (
+        _resolve_gemini_target_model(key_id)
+        if (provider == "gemini" and not requested_model.startswith("gemini-"))
+        else requested_model
+    )
+
     if upstream_protocol == "anthropic":
         upstream_url = _build_anthropic_url(base_url)
         headers = {
@@ -371,6 +394,7 @@ async def _handle_proxy_request(request: Request, caller_protocol: str) -> Respo
             dict(body) if caller_protocol == "openai" else _anthropic_to_openai_body(body)
         )
 
+    forward_body["model"] = upstream_model
     forward_body["stream"] = False
     forward_body.pop("stream_options", None)
 
@@ -415,21 +439,22 @@ async def _handle_proxy_request(request: Request, caller_protocol: str) -> Respo
         input_tokens = int(usage.get("input_tokens", 0))
         output_tokens = int(usage.get("output_tokens", 0))
         final_body = (
-            raw_response
+            dict(raw_response)
             if caller_protocol == "anthropic"
-            else _anthropic_resp_to_openai(raw_response, model)
+            else _anthropic_resp_to_openai(raw_response, requested_model)
         )
     else:
         usage = raw_response.get("usage") or {}
         input_tokens = int(usage.get("prompt_tokens", 0))
         output_tokens = int(usage.get("completion_tokens", 0))
         final_body = (
-            raw_response
+            dict(raw_response)
             if caller_protocol == "openai"
-            else _openai_resp_to_anthropic(raw_response, model)
+            else _openai_resp_to_anthropic(raw_response, requested_model)
         )
 
-    add_spend(key_id, model, input_tokens, output_tokens)
+    final_body["model"] = requested_model
+    add_spend(key_id, upstream_model, input_tokens, output_tokens)
 
     if want_stream:
         stream_gen = (
@@ -476,9 +501,12 @@ def list_burner_models(request: Request) -> JSONResponse:
             )
 
         allowed = json.loads(row["allowed_models"])
-        models = list(SUPPORTED_MODELS) if "*" in allowed else allowed
+        if "*" in allowed:
+            models = list(dict.fromkeys([*SUPPORTED_MODELS, *COMPAT_OPENAI_MODELS]))
+        else:
+            models = list(dict.fromkeys(allowed))
     else:
-        models = list(SUPPORTED_MODELS)
+        models = list(dict.fromkeys([*SUPPORTED_MODELS, *COMPAT_OPENAI_MODELS]))
 
     return JSONResponse(
         status_code=200,
