@@ -24,6 +24,15 @@ if not exist ".venv\Scripts\python.exe" (
         pause
         exit /b 1
     )
+) else (
+    ".venv\Scripts\python.exe" -c "import cryptography" 2>nul || (
+        echo [GUNCELLEME] Yeni Python paketleri yukleniyor...
+        ".venv\Scripts\python.exe" -m pip install -r requirements.txt || (
+            echo [HATA] Paketler guncellenemedi.
+            pause
+            exit /b 1
+        )
+    )
 )
 
 if not exist ".env" (
@@ -33,10 +42,10 @@ if not exist ".env" (
     )
 )
 
-echo [BASLATILIYOR] Fake Claude sunucusu (http://127.0.0.1:8001)...
-start "Burner Key - Fake Claude (:8001)" /D "%BACKEND_DIR%" cmd /k ".venv\Scripts\python.exe fake_claude.py"
+echo [BASLATILIYOR] Mock AI sunucusu (http://127.0.0.1:8001)...
+start "Burner Key - Mock AI (:8001)" /D "%BACKEND_DIR%" cmd /k ".venv\Scripts\python.exe fake_claude.py"
 
-echo [BASLATILIYOR] Burner Key Proxy & Arayuz (http://127.0.0.1:8000)...
+echo [BASLATILIYOR] Burner Key Proxy ^& Arayuz (http://127.0.0.1:8000)...
 start "Burner Key - Proxy & UI (:8000)" /D "%BACKEND_DIR%" cmd /k ".venv\Scripts\python.exe main.py"
 
 timeout /t 2 /nobreak >nul

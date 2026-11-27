@@ -1,4 +1,4 @@
-"""SQLite persistence, key contract functions, and /admin API routes (Owner: Selcuk)."""
+"""SQLite vault, Fernet encryption, contract functions, and /admin API routes (Owner: Selcuk)."""
 
 from __future__ import annotations
 
@@ -9,22 +9,59 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
+from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from pricing import SUPPORTED_MODELS, calculate_cost
+from pricing import (
+    PROVIDER_PRESETS,
+    SUPPORTED_MODELS,
+    calculate_cost,
+    detect_provider_from_key,
+)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+BACKEND_DIR = Path(__file__).resolve().parent
 
 
 def _get_db_path() -> Path:
     raw = os.getenv("DATABASE_PATH", "burner_keys.db").strip() or "burner_keys.db"
     path = Path(raw)
     if not path.is_absolute():
-        path = Path(__file__).resolve().parent / path
+        path = BACKEND_DIR / path
     return path
+
+
+def _get_fernet() -> Fernet:
+    env_key = os.getenv("ENCRYPTION_KEY", "").strip()
+    if env_key:
+        return Fernet(env_key.encode("utf-8"))
+
+    secret_file = BACKEND_DIR / ".secret.key"
+    if secret_file.exists():
+        key_bytes = secret_file.read_text(encoding="utf-8").strip().encode("utf-8")
+    else:
+        key_bytes = Fernet.generate_key()
+        secret_file.write_text(key_bytes.decode("utf-8"), encoding="utf-8")
+    return Fernet(key_bytes)
+
+
+def encrypt_secret(raw_value: str) -> str:
+    """Encrypt a master API key using Fernet."""
+    return _get_fernet().encrypt(raw_value.encode("utf-8")).decode("utf-8")
+
+
+def decrypt_secret(token: str) -> str:
+    """Decrypt a stored master API key."""
+    try:
+        return _get_fernet().decrypt(token.encode("utf-8")).decode("utf-8")
+    except InvalidToken as exc:
+        raise RuntimeError(
+            "Master key could not be decrypted with current ENCRYPTION_KEY / .secret.key."
+        ) from exc
 
 
 @contextmanager
@@ -46,13 +83,35 @@ def get_db() -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _mask_key(raw_key: str) -> str:
+    cleaned = raw_key.strip()
+    if len(cleaned) <= 12:
+        return f"{cleaned[:4]}...{cleaned[-2:]}" if len(cleaned) > 6 else "***"
+    return f"{cleaned[:8]}...{cleaned[-4:]}"
+
+
 def init_db() -> None:
-    """Create burner_keys and request_logs tables if they do not exist."""
+    """Create master_keys, burner_keys, and request_logs tables and seed default Mock vault."""
     with get_db() as conn:
         conn.executescript(
             """
+            CREATE TABLE IF NOT EXISTS master_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                base_url TEXT NOT NULL,
+                encrypted_api_key TEXT NOT NULL,
+                key_preview TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS burner_keys (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                master_key_id INTEGER NOT NULL DEFAULT 1 REFERENCES master_keys(id) ON DELETE RESTRICT,
                 name TEXT NOT NULL,
                 api_key TEXT UNIQUE NOT NULL,
                 key_preview TEXT NOT NULL,
@@ -83,15 +142,38 @@ def init_db() -> None:
             """
         )
 
+        # Safe migration for existing databases created before master_keys existed
+        cols = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(burner_keys)").fetchall()
+        }
+        if "master_key_id" not in cols:
+            conn.execute(
+                "ALTER TABLE burner_keys ADD COLUMN master_key_id INTEGER NOT NULL DEFAULT 1"
+            )
 
-def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _mask_key(raw_key: str) -> str:
-    if len(raw_key) <= 14:
-        return f"{raw_key[:6]}...{raw_key[-2:]}"
-    return f"{raw_key[:12]}...{raw_key[-4:]}"
+        existing_masters = conn.execute("SELECT COUNT(*) FROM master_keys").fetchone()[0]
+        if existing_masters == 0:
+            default_upstream = (
+                os.getenv("UPSTREAM_BASE_URL", "http://127.0.0.1:8001").strip().rstrip("/")
+            )
+            mock_secret = os.getenv("ANTHROPIC_API_KEY", "sk-mock-burner-key").strip()
+            conn.execute(
+                """
+                INSERT INTO master_keys (
+                    name, provider, base_url, encrypted_api_key, key_preview, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "Mock / Test Kasası (Ücretsiz)",
+                    "mock",
+                    default_upstream,
+                    encrypt_secret(mock_secret),
+                    _mask_key(mock_secret),
+                    _now_utc().isoformat(),
+                ),
+            )
 
 
 def _compute_status(row: sqlite3.Row, now: datetime | None = None) -> str:
@@ -182,7 +264,7 @@ def check_key(key: str, model: str) -> tuple[int | None, int | None, str | None]
             return None, 401, msg
 
         allowed_models = json.loads(row["allowed_models"])
-        if model not in allowed_models:
+        if "*" not in allowed_models and model not in allowed_models:
             msg = f"Model '{model}' is not allowed for this burner key."
             _log_request(conn, row["id"], row["name"], model, 403, msg)
             return None, 403, msg
@@ -193,6 +275,48 @@ def check_key(key: str, model: str) -> tuple[int | None, int | None, str | None]
             return None, 429, msg
 
         return int(row["id"]), None, None
+
+
+def get_upstream_target(key_id: int) -> dict[str, str]:
+    """Resolve and decrypt the upstream Master Key configuration for a Burner Key."""
+    with get_db() as conn:
+        row = conn.execute(
+            """
+            SELECT mk.provider, mk.base_url, mk.encrypted_api_key
+            FROM burner_keys bk
+            LEFT JOIN master_keys mk ON bk.master_key_id = mk.id
+            WHERE bk.id = ?
+            """,
+            (key_id,),
+        ).fetchone()
+
+        if not row or not row["provider"]:
+            row = conn.execute(
+                "SELECT provider, base_url, encrypted_api_key FROM master_keys ORDER BY id ASC LIMIT 1"
+            ).fetchone()
+
+    if not row:
+        return {
+            "provider": "mock",
+            "protocol": "mock",
+            "base_url": os.getenv("UPSTREAM_BASE_URL", "http://127.0.0.1:8001").strip().rstrip("/"),
+            "api_key": os.getenv("ANTHROPIC_API_KEY", "sk-mock-burner-key").strip(),
+        }
+
+    provider = row["provider"]
+    preset = PROVIDER_PRESETS.get(provider, PROVIDER_PRESETS["custom"])
+    base_url = row["base_url"].strip().rstrip("/")
+    if provider == "mock":
+        env_upstream = os.getenv("UPSTREAM_BASE_URL", "").strip().rstrip("/")
+        if env_upstream:
+            base_url = env_upstream
+
+    return {
+        "provider": provider,
+        "protocol": preset["protocol"],
+        "base_url": base_url,
+        "api_key": decrypt_secret(row["encrypted_api_key"]),
+    }
 
 
 def add_spend(key_id: int, model: str, input_tokens: int, output_tokens: int) -> float:
@@ -231,7 +355,25 @@ def add_spend(key_id: int, model: str, input_tokens: int, output_tokens: int) ->
 # ---------------------------------------------------------------------------
 
 
+class CreateMasterKeyRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    provider: str = Field(default="auto", min_length=1, max_length=40)
+    base_url: str | None = Field(default=None, max_length=300)
+    api_key: str = Field(..., min_length=3, max_length=500)
+
+
+class MasterKeyOut(BaseModel):
+    id: int
+    name: str
+    provider: str
+    protocol: str
+    base_url: str
+    key_preview: str
+    created_at: str
+
+
 class CreateKeyRequest(BaseModel):
+    master_key_id: int | None = None
     name: str = Field(..., min_length=1, max_length=120)
     budget_limit_usd: float = Field(default=0.05, gt=0)
     ttl_minutes: int = Field(default=60, ge=1, le=43200)
@@ -242,6 +384,9 @@ class CreateKeyRequest(BaseModel):
 
 class KeySummaryOut(BaseModel):
     id: int
+    master_key_id: int
+    master_key_name: str
+    provider: str
     name: str
     key_preview: str
     allowed_models: list[str]
@@ -271,9 +416,26 @@ class RequestLogOut(BaseModel):
     created_at: str
 
 
+def _row_to_master_out(row: sqlite3.Row) -> MasterKeyOut:
+    provider = row["provider"]
+    preset = PROVIDER_PRESETS.get(provider, PROVIDER_PRESETS["custom"])
+    return MasterKeyOut(
+        id=int(row["id"]),
+        name=row["name"],
+        provider=provider,
+        protocol=preset["protocol"],
+        base_url=row["base_url"],
+        key_preview=row["key_preview"],
+        created_at=row["created_at"],
+    )
+
+
 def _row_to_summary(row: sqlite3.Row) -> KeySummaryOut:
     return KeySummaryOut(
         id=int(row["id"]),
+        master_key_id=int(row["master_key_id"]),
+        master_key_name=row["master_key_name"] or "Mock / Test Kasası",
+        provider=row["provider"] or "mock",
         name=row["name"],
         key_preview=row["key_preview"],
         allowed_models=json.loads(row["allowed_models"]),
@@ -287,10 +449,92 @@ def _row_to_summary(row: sqlite3.Row) -> KeySummaryOut:
     )
 
 
+@router.get("/providers", response_model=list[dict[str, Any]])
+def list_providers() -> list[dict[str, Any]]:
+    """Return supported AI providers, default base URLs, and preset models."""
+    return list(PROVIDER_PRESETS.values())
+
+
 @router.get("/models", response_model=list[str])
-def list_supported_models() -> list[str]:
-    """Return supported Claude models for UI selection."""
+def list_supported_models(provider: str | None = Query(default=None)) -> list[str]:
+    """Return supported models, optionally filtered by provider."""
+    if provider and provider in PROVIDER_PRESETS:
+        return list(PROVIDER_PRESETS[provider]["models"])
     return SUPPORTED_MODELS
+
+
+@router.post("/master-keys", response_model=MasterKeyOut, status_code=status.HTTP_201_CREATED)
+def create_master_key(payload: CreateMasterKeyRequest) -> MasterKeyOut:
+    """Encrypt and store a new upstream Master API Key (OpenAI, Claude, Gemini, Groq, etc.)."""
+    raw_key = payload.api_key.strip()
+    provider = payload.provider.strip().lower()
+    if provider == "auto":
+        provider = detect_provider_from_key(raw_key)
+    if provider not in PROVIDER_PRESETS:
+        provider = "custom"
+
+    preset = PROVIDER_PRESETS[provider]
+    base_url = (payload.base_url or preset["default_base_url"]).strip().rstrip("/")
+    encrypted = encrypt_secret(raw_key)
+    preview = _mask_key(raw_key)
+    created_at = _now_utc().isoformat()
+
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO master_keys (
+                name, provider, base_url, encrypted_api_key, key_preview, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                payload.name.strip(),
+                provider,
+                base_url,
+                encrypted,
+                preview,
+                created_at,
+            ),
+        )
+        row = conn.execute(
+            "SELECT * FROM master_keys WHERE id = ?", (cursor.lastrowid,)
+        ).fetchone()
+    return _row_to_master_out(row)
+
+
+@router.get("/master-keys", response_model=list[MasterKeyOut])
+def list_master_keys() -> list[MasterKeyOut]:
+    """List all stored Master Keys without revealing raw secrets."""
+    with get_db() as conn:
+        rows = conn.execute("SELECT * FROM master_keys ORDER BY id DESC").fetchall()
+    return [_row_to_master_out(r) for r in rows]
+
+
+@router.delete("/master-keys/{master_id}")
+def delete_master_key(master_id: int) -> dict[str, Any]:
+    """Delete an unused Master Key (keeps at least one vault entry)."""
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM master_keys WHERE id = ?", (master_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Master key not found.")
+
+        total = conn.execute("SELECT COUNT(*) FROM master_keys").fetchone()[0]
+        if total <= 1:
+            raise HTTPException(
+                status_code=400, detail="Cannot delete the last remaining master key."
+            )
+
+        in_use = conn.execute(
+            "SELECT COUNT(*) FROM burner_keys WHERE master_key_id = ?", (master_id,)
+        ).fetchone()[0]
+        if in_use > 0:
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot delete a master key that still has linked burner keys.",
+            )
+
+        conn.execute("DELETE FROM master_keys WHERE id = ?", (master_id,))
+    return {"deleted": True, "id": master_id}
 
 
 @router.post("/keys", response_model=CreateKeyOut, status_code=status.HTTP_201_CREATED)
@@ -310,16 +554,36 @@ def create_key(payload: CreateKeyRequest) -> CreateKeyOut:
     preview = _mask_key(raw_key)
 
     with get_db() as conn:
+        master_id = payload.master_key_id
+        if master_id is None:
+            default_master = conn.execute(
+                "SELECT id FROM master_keys WHERE provider = 'mock' ORDER BY id ASC LIMIT 1"
+            ).fetchone()
+            if not default_master:
+                default_master = conn.execute(
+                    "SELECT id FROM master_keys ORDER BY id ASC LIMIT 1"
+                ).fetchone()
+            if not default_master:
+                raise HTTPException(status_code=400, detail="No master key available.")
+            master_id = int(default_master["id"])
+        else:
+            master_exists = conn.execute(
+                "SELECT id FROM master_keys WHERE id = ?", (master_id,)
+            ).fetchone()
+            if not master_exists:
+                raise HTTPException(status_code=404, detail="Master key not found.")
+
         cursor = conn.execute(
             """
             INSERT INTO burner_keys (
-                name, api_key, key_preview, allowed_models,
+                master_key_id, name, api_key, key_preview, allowed_models,
                 budget_limit_usd, spent_usd, request_count,
                 expires_at, is_revoked, created_at
             )
-            VALUES (?, ?, ?, ?, ?, 0.0, 0, ?, 0, ?)
+            VALUES (?, ?, ?, ?, ?, ?, 0.0, 0, ?, 0, ?)
             """,
             (
+                master_id,
                 payload.name.strip(),
                 raw_key,
                 preview,
@@ -330,7 +594,13 @@ def create_key(payload: CreateKeyRequest) -> CreateKeyOut:
             ),
         )
         row = conn.execute(
-            "SELECT * FROM burner_keys WHERE id = ?", (cursor.lastrowid,)
+            """
+            SELECT bk.*, mk.name AS master_key_name, mk.provider AS provider
+            FROM burner_keys bk
+            LEFT JOIN master_keys mk ON bk.master_key_id = mk.id
+            WHERE bk.id = ?
+            """,
+            (cursor.lastrowid,),
         ).fetchone()
 
     summary = _row_to_summary(row)
@@ -341,7 +611,14 @@ def create_key(payload: CreateKeyRequest) -> CreateKeyOut:
 def list_keys() -> list[KeySummaryOut]:
     """List all burner keys newest-first with live computed status."""
     with get_db() as conn:
-        rows = conn.execute("SELECT * FROM burner_keys ORDER BY id DESC").fetchall()
+        rows = conn.execute(
+            """
+            SELECT bk.*, mk.name AS master_key_name, mk.provider AS provider
+            FROM burner_keys bk
+            LEFT JOIN master_keys mk ON bk.master_key_id = mk.id
+            ORDER BY bk.id DESC
+            """
+        ).fetchall()
     return [_row_to_summary(r) for r in rows]
 
 
@@ -349,12 +626,18 @@ def list_keys() -> list[KeySummaryOut]:
 def revoke_key(key_id: int) -> KeySummaryOut:
     """Immediately revoke a burner key (Kill Switch)."""
     with get_db() as conn:
-        row = conn.execute("SELECT * FROM burner_keys WHERE id = ?", (key_id,)).fetchone()
+        row = conn.execute("SELECT id FROM burner_keys WHERE id = ?", (key_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Burner key not found.")
         conn.execute("UPDATE burner_keys SET is_revoked = 1 WHERE id = ?", (key_id,))
         updated = conn.execute(
-            "SELECT * FROM burner_keys WHERE id = ?", (key_id,)
+            """
+            SELECT bk.*, mk.name AS master_key_name, mk.provider AS provider
+            FROM burner_keys bk
+            LEFT JOIN master_keys mk ON bk.master_key_id = mk.id
+            WHERE bk.id = ?
+            """,
+            (key_id,),
         ).fetchone()
     return _row_to_summary(updated)
 

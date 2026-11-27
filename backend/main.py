@@ -1,4 +1,4 @@
-"""FastAPI entrypoint for Burner Key reverse proxy and frontend hosting (Owner: Muzaffer)."""
+"""FastAPI entrypoint for Burner Key Universal BYOK proxy & frontend hosting (Owner: Muzaffer)."""
 
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(
-    title="Burner Key — Claude BYOK Reverse Proxy",
-    version="0.1.0",
+    title="Burner Key — Universal AI BYOK Reverse Proxy",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -46,11 +46,12 @@ app.include_router(admin_router)
 
 
 @app.get("/health", tags=["system"])
-def health_check() -> dict[str, str]:
-    """Return service health and configured upstream URL."""
+def health_check() -> dict[str, object]:
+    """Return service health and proxy capabilities."""
     return {
         "status": "ok",
         "upstream_base_url": os.getenv("UPSTREAM_BASE_URL", "http://127.0.0.1:8001"),
+        "universal_proxy": True,
     }
 
 
