@@ -1655,3 +1655,86 @@ body.is-resizing * {
   background: var(--red);
   color: var(--on-red);
 }
+
+/* ---------- 02: key hover reveal + click-to-copy ---------- */
+
+.kpreview {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: copy;
+}
+
+.kpreview:hover,
+.kpreview:focus-visible {
+  color: var(--fg);
+}
+
+.kpreview.is-masked {
+  cursor: help;
+}
+
+.key-pop {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: min(560px, calc(100vw - 16px));
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  background: var(--fill);
+  color: var(--on-fill);
+  font-family: var(--mono);
+  pointer-events: none;
+}
+
+.key-pop-val {
+  font-size: 12px;
+  font-weight: 500;
+  word-break: break-all;
+}
+
+.key-pop-hint {
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  opacity: 0.7;
+}
+
+.key-pop.is-copied {
+  border-color: var(--red);
+}
+
+.key-pop.is-copied .key-pop-hint {
+  color: var(--red);
+  opacity: 1;
+}
+
+.key-pop.is-masked .key-pop-val {
+  opacity: 0.7;
+}
+
+/* ---------- 02: TEST states (aria-disabled keeps the tooltip working) ---------- */
+
+.mini[aria-disabled="true"],
+.mini[aria-disabled="true"]:hover {
+  background: var(--panel);
+  cursor: not-allowed;
+}
+
+.mini.is-off,
+.mini.is-off:hover {
+  border-color: var(--faint);
+  color: var(--disabled);
+}
+
+.mini.is-loaded,
+.mini.is-loaded:hover {
+  border-color: var(--line);
+  color: var(--mute);
+  cursor: default;
+}

@@ -63,8 +63,10 @@ const state = {
   burnTimer: null,
   burningId: null,
   logsSig: "",
-  // Raw keys are only returned once by POST /admin/keys, so TEST → works for keys made in this tab.
+  // id -> raw key, persisted in localStorage (see loadRawKeys); filled in initDashboard.
   rawKeys: new Map(),
+  // Current value of the simulator's x-api-key field (sent by simulator.js via burner:sim-key).
+  simKey: "",
   // Vault: "mock" uses the free local mock vault, "live" a real provider master key.
   vaultMode: "mock",
   liveVault: "new", // "new" = key typed into the form, otherwise a saved master key id
@@ -93,6 +95,56 @@ function modelLabel(model) {
 
 function selectKeyInSimulator(apiKey) {
   window.dispatchEvent(new CustomEvent("burner:select-key", { detail: { apiKey } }));
+}
+
+/* ---------- Full (raw) keys ----------
+   The backend returns the raw key only once (POST /admin/keys) and masks it in GET /admin/keys.
+   We keep raw keys in localStorage by key id so they survive the 2s polling and page reloads,
+   and only trust a stored key if it still matches the row's masked preview (e.g. after a DB reset). */
+
+const RAW_KEYS_STORAGE = "burner:rawKeys";
+
+// Same masking as backend keys._mask_key()
+function maskKey(raw) {
+  const c = String(raw).trim();
+  if (c.length <= 12) return c.length > 6 ? `${c.slice(0, 4)}...${c.slice(-2)}` : "***";
+  return `${c.slice(0, 8)}...${c.slice(-4)}`;
+}
+
+function loadRawKeys() {
+  try {
+    const obj = JSON.parse(localStorage.getItem(RAW_KEYS_STORAGE) || "{}");
+    return new Map(Object.entries(obj).map(([id, raw]) => [Number(id), String(raw)]));
+  } catch {
+    return new Map();
+  }
+}
+
+function saveRawKeys() {
+  try {
+    localStorage.setItem(RAW_KEYS_STORAGE, JSON.stringify(Object.fromEntries(state.rawKeys)));
+  } catch {
+    // storage unavailable: keys still work for this page session
+  }
+}
+
+function rawKeyFor(k) {
+  const raw = state.rawKeys.get(k.id);
+  return raw && maskKey(raw) === k.key_preview ? raw : null;
+}
+
+// Drop stored keys whose row is gone or no longer matches (keeps storage from growing forever).
+function pruneRawKeys(keys) {
+  const byId = new Map(keys.map((k) => [k.id, k]));
+  let changed = false;
+  for (const [id, raw] of state.rawKeys) {
+    const row = byId.get(id);
+    if (!row || maskKey(raw) !== row.key_preview) {
+      state.rawKeys.delete(id);
+      changed = true;
+    }
+  }
+  if (changed) saveRawKeys();
 }
 
 function formatTime(iso) {
@@ -447,10 +499,16 @@ function burnButton(k) {
   )} anahtarını yak"><span>BURN</span></button>`;
 }
 
+// TEST is only "used up" when this exact key is already in the simulator's x-api-key field.
+// aria-disabled (not disabled) so the explanatory tooltip still shows on hover.
 function testButton(k) {
   if (k.status !== "active") return "";
-  if (!state.rawKeys.has(k.id)) {
-    return `<button class="mini" type="button" disabled title="Ham anahtar yalnızca üretildiği anda gösterilir; bu anahtar bu sekmede üretilmedi.">TEST →</button>`;
+  const raw = rawKeyFor(k);
+  if (!raw) {
+    return `<button class="mini is-off" type="button" aria-disabled="true" title="Tam anahtar bu tarayıcıda kayıtlı değil">TEST →</button>`;
+  }
+  if (state.simKey === raw) {
+    return `<button class="mini is-loaded" type="button" aria-disabled="true" title="Bu anahtar simülatörde yüklü">YÜKLÜ ✓</button>`;
   }
   return `<button class="mini" type="button" data-test-id="${k.id}" title="Anahtarı simülatöre aktar">TEST →</button>`;
 }
@@ -471,7 +529,9 @@ function rowHtml(k) {
         3,
         "0"
       )}</span><span class="k-name-text">${escapeHtml(k.name)}</span></div>
-      <div class="sub">${escapeHtml(k.key_preview)}${provider}</div>
+      <div class="sub"><button type="button" class="kpreview${rawKeyFor(k) ? "" : " is-masked"}" data-key-id="${
+        k.id
+      }" aria-label="Tam anahtarı göster ve kopyala">${escapeHtml(k.key_preview)}</button>${provider}</div>
     </td>
     <td class="nowrap">
       <div class="meter ${pct >= 80 ? "hot" : ""}" title="%${pct.toFixed(1)}">${cells}</div>
@@ -481,6 +541,92 @@ function rowHtml(k) {
     <td class="nowrap"${expiryTitle ? ` title="${escapeHtml(expiryTitle)}"` : ""}>${statusCell(k)}</td>
     <td class="r nowrap"><div class="row-actions">${testButton(k)}${burnButton(k)}</div></td>
   `;
+}
+
+/* ---------- Key hover reveal + click-to-copy ----------
+   One fixed-position popover on <body>: it never shifts the table and isn't clipped by the
+   scrolling panel. Shown on hover/focus of a .kpreview, clicking copies the full key. */
+
+let keyPop = null;
+let keyPopAnchor = null;
+let keyPopTimer = null;
+
+function ensureKeyPop() {
+  if (keyPop) return keyPop;
+  keyPop = document.createElement("div");
+  keyPop.id = "keyPop";
+  keyPop.className = "key-pop";
+  keyPop.setAttribute("role", "tooltip");
+  keyPop.hidden = true;
+  keyPop.innerHTML = `<code class="key-pop-val"></code><span class="key-pop-hint"></span>`;
+  document.body.appendChild(keyPop);
+  return keyPop;
+}
+
+function keyRowForPreview(el) {
+  return state.keys.find((k) => k.id === Number(el.dataset.keyId));
+}
+
+function setKeyPopContent(el, copied = false) {
+  const pop = ensureKeyPop();
+  const row = keyRowForPreview(el);
+  const raw = row && rawKeyFor(row);
+  pop.classList.toggle("is-masked", !raw);
+  pop.classList.toggle("is-copied", copied);
+  pop.querySelector(".key-pop-val").textContent = raw || (row ? row.key_preview : "");
+  pop.querySelector(".key-pop-hint").textContent = copied
+    ? "✓ KOPYALANDI"
+    : raw
+      ? "TIKLA → KOPYALA"
+      : "Tam anahtar bu tarayıcıda kayıtlı değil";
+}
+
+function positionKeyPop(el) {
+  const pop = ensureKeyPop();
+  const r = el.getBoundingClientRect();
+  const w = pop.offsetWidth;
+  const h = pop.offsetHeight;
+  const left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
+  const below = r.bottom + 4;
+  const top = below + h > window.innerHeight - 8 ? r.top - h - 4 : below;
+  pop.style.left = `${left}px`;
+  pop.style.top = `${top}px`;
+}
+
+function showKeyPop(el) {
+  const pop = ensureKeyPop();
+  keyPopAnchor = el;
+  clearTimeout(keyPopTimer);
+  setKeyPopContent(el);
+  pop.hidden = false;
+  positionKeyPop(el);
+  el.setAttribute("aria-describedby", "keyPop");
+}
+
+function hideKeyPop() {
+  if (!keyPop) return;
+  clearTimeout(keyPopTimer);
+  keyPop.hidden = true;
+  keyPopAnchor?.removeAttribute("aria-describedby");
+  keyPopAnchor = null;
+}
+
+async function copyKeyFromPreview(el) {
+  const row = keyRowForPreview(el);
+  const raw = row && rawKeyFor(row);
+  showKeyPop(el);
+  if (!raw) return;
+  try {
+    await navigator.clipboard.writeText(raw);
+  } catch {
+    keyPop.querySelector(".key-pop-hint").textContent = "KOPYALANAMADI";
+    return;
+  }
+  setKeyPopContent(el, true);
+  positionKeyPop(el);
+  keyPopTimer = setTimeout(() => {
+    if (keyPopAnchor === el) setKeyPopContent(el);
+  }, 1200);
 }
 
 function sortedKeys() {
@@ -607,6 +753,7 @@ function renderLogs(logs) {
 export async function initDashboard() {
   const root = document.getElementById("dashboard-root");
   if (!root) return;
+  state.rawKeys = loadRawKeys();
   renderShell(root);
   syncCustomControls();
 
@@ -868,6 +1015,7 @@ export async function initDashboard() {
         fetchHealth().catch(() => null),
       ]);
       state.keys = keys;
+      pruneRawKeys(keys);
       if (health?.public_url) {
         state.publicUrl = health.public_url;
       }
@@ -909,6 +1057,7 @@ export async function initDashboard() {
 
       latestCreatedKey = created.api_key;
       state.rawKeys.set(created.id, created.api_key);
+      saveRawKeys();
       document.getElementById("newKeyValue").textContent = latestCreatedKey;
       syncPublicUrlUI();
       document.getElementById("newKeyBanner").hidden = false;
@@ -988,8 +1137,15 @@ export async function initDashboard() {
 
     const testBtn = e.target.closest("button[data-test-id]");
     if (testBtn) {
-      const raw = state.rawKeys.get(Number(testBtn.dataset.testId));
+      const row = state.keys.find((k) => k.id === Number(testBtn.dataset.testId));
+      const raw = row && rawKeyFor(row);
       if (raw) selectKeyInSimulator(raw);
+      return;
+    }
+
+    const preview = e.target.closest("button.kpreview");
+    if (preview) {
+      copyKeyFromPreview(preview);
       return;
     }
 
@@ -1030,6 +1186,34 @@ export async function initDashboard() {
   });
 
   window.addEventListener("burner:activity", refresh);
+
+  // Simulator tells us what's in its x-api-key field, so TEST/YÜKLÜ always reflects it.
+  window.addEventListener("burner:sim-key", (e) => {
+    const next = String(e.detail?.apiKey || "").trim();
+    if (next === state.simKey) return;
+    state.simKey = next;
+    renderKeys();
+  });
+
+  // Key hover reveal (event delegation survives the in-place row updates).
+  const keysBody = document.getElementById("keysTableBody");
+  keysBody.addEventListener("mouseover", (e) => {
+    const el = e.target.closest("button.kpreview");
+    if (el && el !== keyPopAnchor) showKeyPop(el);
+  });
+  keysBody.addEventListener("mouseout", (e) => {
+    const el = e.target.closest("button.kpreview");
+    if (el && !el.contains(e.relatedTarget) && document.activeElement !== el) hideKeyPop();
+  });
+  keysBody.addEventListener("focusin", (e) => {
+    const el = e.target.closest("button.kpreview");
+    if (el) showKeyPop(el);
+  });
+  keysBody.addEventListener("focusout", (e) => {
+    if (e.target.closest("button.kpreview")) hideKeyPop();
+  });
+  keysBody.closest(".panel-body").addEventListener("scroll", hideKeyPop, { passive: true });
+  window.addEventListener("resize", hideKeyPop);
 
   syncPublicUrlUI();
   await Promise.all([loadProviders(), loadVaults()]);

@@ -137,9 +137,15 @@ export async function initSimulator() {
   let loopTimer = null;
   let loopCount = 0;
 
+  // Tell the dashboard what's in x-api-key so its TEST buttons know which key is loaded.
+  const announceSimKey = () =>
+    window.dispatchEvent(new CustomEvent("burner:sim-key", { detail: { apiKey: keyInput.value.trim() } }));
+  keyInput.addEventListener("input", announceSimKey);
+
   window.addEventListener("burner:select-key", (e) => {
     if (e.detail?.apiKey) {
       keyInput.value = e.detail.apiKey;
+      announceSimKey();
       // Restart the flash so repeated TEST → clicks are visible too.
       keyInput.classList.remove("flash");
       void keyInput.offsetWidth;
