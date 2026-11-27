@@ -310,10 +310,12 @@ def _iter_anthropic_sse(final_body: dict[str, Any]) -> Iterator[str]:
 
 
 COMPAT_OPENAI_MODELS: tuple[str, ...] = ("gpt-4o-mini", "gpt-4o")
+DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
+EXCLUDED_GEMINI_MODELS = {"gemini-2.0-flash"}
 
 
 def _resolve_gemini_target_model(key_id: int) -> str:
-    """Pick the first allowed gemini-* model for this key, or fall back to gemini-2.0-flash."""
+    """Pick the first active gemini-* model for this key, or fall back to gemini-3.8-flash."""
     with get_db() as conn:
         row = conn.execute(
             "SELECT allowed_models FROM burner_keys WHERE id = ?", (key_id,)
@@ -321,9 +323,13 @@ def _resolve_gemini_target_model(key_id: int) -> str:
     if row:
         allowed = json.loads(row["allowed_models"])
         for candidate in allowed:
-            if isinstance(candidate, str) and candidate.startswith("gemini-"):
+            if (
+                isinstance(candidate, str)
+                and candidate.startswith("gemini-")
+                and candidate not in EXCLUDED_GEMINI_MODELS
+            ):
                 return candidate
-    return "gemini-2.0-flash"
+    return DEFAULT_GEMINI_MODEL
 
 
 async def _handle_proxy_request(request: Request, caller_protocol: str) -> Response:
@@ -370,7 +376,10 @@ async def _handle_proxy_request(request: Request, caller_protocol: str) -> Respo
 
     upstream_model = (
         _resolve_gemini_target_model(key_id)
-        if (provider == "gemini" and not requested_model.startswith("gemini-"))
+        if (
+            provider == "gemini"
+            and (not requested_model.startswith("gemini-") or requested_model in EXCLUDED_GEMINI_MODELS)
+        )
         else requested_model
     )
 
