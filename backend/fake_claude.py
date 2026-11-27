@@ -1,4 +1,4 @@
-"""Mock Anthropic Claude Messages server for zero-cost team testing (Owner: Kisi 4)."""
+"""Mock Anthropic Claude Messages server for zero-cost team testing (Owner: Muzaffer)."""
 
 from __future__ import annotations
 

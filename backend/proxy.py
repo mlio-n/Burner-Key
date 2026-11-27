@@ -1,4 +1,4 @@
-"""Anthropic /v1/messages reverse proxy route (Owner: Kisi 1)."""
+"""Anthropic /v1/messages reverse proxy route (Owner: Muzaffer)."""
 
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ async def proxy_messages(request: Request) -> JSONResponse:
         return _anthropic_error(
             500,
             "api_error",
-            "ANTHROPIC_API_KEY is not configured in .env.",
+            "ANTHROPIC_API_KEY is not configured in backend/.env.",
         )
 
     upstream_url = f"{upstream_base}/v1/messages"

@@ -1,8 +1,8 @@
-"""Anthropic Claude model pricing table and cost calculation (Owner: Kisi 2)."""
+"""Anthropic Claude model pricing table and cost calculation (Owner: Selcuk)."""
 
 from __future__ import annotations
 
-# Official-style USD pricing per 1,000,000 tokens: (input_usd_per_1m, output_usd_per_1m)
+# USD pricing per 1,000,000 tokens: (input_usd_per_1m, output_usd_per_1m)
 MODEL_PRICING_PER_1M: dict[str, tuple[float, float]] = {
     "claude-3-5-haiku-20241022": (0.80, 4.00),
     "claude-3-5-sonnet-20241022": (3.00, 15.00),

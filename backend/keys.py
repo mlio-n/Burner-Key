@@ -1,4 +1,4 @@
-"""SQLite persistence, key contract functions, and /admin API routes (Owner: Kisi 2)."""
+"""SQLite persistence, key contract functions, and /admin API routes (Owner: Selcuk)."""
 
 from __future__ import annotations
 
@@ -142,7 +142,7 @@ def _log_request(
 
 
 # ---------------------------------------------------------------------------
-# Contract Functions (Kisi 1 <-> Kisi 2)
+# Contract Functions (Muzaffer <-> Selcuk)
 # ---------------------------------------------------------------------------
 
 
@@ -233,7 +233,7 @@ def add_spend(key_id: int, model: str, input_tokens: int, output_tokens: int) ->
 
 class CreateKeyRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
-    budget_limit_usd: float = Field(default=0.10, gt=0)
+    budget_limit_usd: float = Field(default=0.05, gt=0)
     ttl_minutes: int = Field(default=60, ge=1, le=43200)
     allowed_models: list[str] = Field(
         default_factory=lambda: ["claude-3-5-haiku-20241022"], min_length=1

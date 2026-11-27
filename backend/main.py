@@ -1,4 +1,4 @@
-"""FastAPI entrypoint for Burner Key reverse proxy and static UI (Owner: Kisi 1)."""
+"""FastAPI entrypoint for Burner Key reverse proxy and frontend hosting (Owner: Muzaffer)."""
 
 from __future__ import annotations
 
@@ -9,16 +9,16 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-load_dotenv()
+BACKEND_DIR = Path(__file__).resolve().parent
+FRONTEND_DIR = BACKEND_DIR.parent / "frontend"
+
+load_dotenv(BACKEND_DIR / ".env")
+load_dotenv(BACKEND_DIR.parent / ".env", override=False)
 
 from keys import init_db, router as admin_router  # noqa: E402
 from proxy import router as proxy_router  # noqa: E402
-
-BASE_DIR = Path(__file__).resolve().parent
-STATIC_DIR = BASE_DIR / "static"
 
 
 @asynccontextmanager
@@ -44,15 +44,6 @@ app.add_middleware(
 app.include_router(proxy_router)
 app.include_router(admin_router)
 
-if STATIC_DIR.exists():
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
-
-@app.get("/", include_in_schema=False)
-def serve_index() -> FileResponse:
-    """Serve the single-file admin dashboard."""
-    return FileResponse(str(STATIC_DIR / "index.html"))
-
 
 @app.get("/health", tags=["system"])
 def health_check() -> dict[str, str]:
@@ -61,6 +52,10 @@ def health_check() -> dict[str, str]:
         "status": "ok",
         "upstream_base_url": os.getenv("UPSTREAM_BASE_URL", "http://127.0.0.1:8001"),
     }
+
+
+if FRONTEND_DIR.exists():
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
 
 
 if __name__ == "__main__":
