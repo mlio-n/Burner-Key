@@ -10,9 +10,23 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from keys import add_spend, check_key, get_upstream_target
+from keys import add_spend, check_key, get_upstream_target, release_reservation
 
 router = APIRouter(tags=["proxy"])
+
+
+def _extract_upstream_error(raw_response) -> str:
+    """Pull a readable message out of any provider's error body (dict or list)."""
+    item = raw_response[0] if isinstance(raw_response, list) and raw_response else raw_response
+    if isinstance(item, dict):
+        err = item.get("error", item)
+        if isinstance(err, dict):
+            msg = err.get("message") or err.get("status") or ""
+            if msg:
+                return str(msg)[:500]
+        elif err:
+            return str(err)[:500]
+    return str(raw_response)[:500]
 
 
 def _protocol_error(
@@ -268,6 +282,7 @@ async def _handle_proxy_request(request: Request, caller_protocol: str) -> JSONR
                 json=forward_body,
             )
     except httpx.HTTPError as exc:
+        release_reservation(key_id)
         return _protocol_error(
             caller_protocol,
             502,
@@ -278,6 +293,7 @@ async def _handle_proxy_request(request: Request, caller_protocol: str) -> JSONR
     try:
         raw_response = upstream_res.json()
     except ValueError:
+        release_reservation(key_id)
         return _protocol_error(
             caller_protocol,
             upstream_res.status_code,
@@ -286,7 +302,13 @@ async def _handle_proxy_request(request: Request, caller_protocol: str) -> JSONR
         )
 
     if upstream_res.status_code != 200:
-        return JSONResponse(status_code=upstream_res.status_code, content=raw_response)
+        release_reservation(key_id)
+        return _protocol_error(
+            caller_protocol,
+            upstream_res.status_code,
+            "api_error",
+            f"Upstream error: {_extract_upstream_error(raw_response)}",
+        )
 
     if upstream_protocol == "anthropic":
         usage = raw_response.get("usage") or {}

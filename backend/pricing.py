@@ -12,9 +12,9 @@ PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
         "default_base_url": "http://127.0.0.1:8001",
         "key_hint": "Ücretsiz yerel test (kredi harcamaz)",
         "models": [
-            "claude-3-5-haiku-20241022",
+            "claude-haiku-5-5",
             "gpt-4o-mini",
-            "gemini-2.5-flash",
+            "gemini-3.8-flash",
         ],
     },
     "openai": {
@@ -37,11 +37,10 @@ PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
         "default_base_url": "https://api.anthropic.com",
         "key_hint": "sk-ant-...",
         "models": [
-            "claude-3-5-haiku-20241022",
-            "claude-3-5-sonnet-20241022",
-            "claude-3-7-sonnet-20250219",
-            "claude-sonnet-4-20250514",
-            "claude-3-opus-20240229",
+            "claude-haiku-5-5",
+            "claude-sonnet-5-5",
+            "claude-opus-5-5",
+            "claude-fable-5-2",
         ],
     },
     "gemini": {
@@ -51,7 +50,8 @@ PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
         "default_base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
         "key_hint": "AIza...",
         "models": [
-            "gemini-2.5-flash",
+            "gemini-4-hydrogen",
+            "gemini-3.8-flash",
             "gemini-2.5-pro",
             "gemini-2.0-flash",
         ],
@@ -105,19 +105,19 @@ PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
 
 # USD pricing per 1,000,000 tokens: (input_usd_per_1m, output_usd_per_1m)
 MODEL_PRICING_PER_1M: dict[str, tuple[float, float]] = {
-    # Anthropic
-    "claude-3-5-haiku-20241022": (0.80, 4.00),
-    "claude-3-5-sonnet-20241022": (3.00, 15.00),
-    "claude-3-7-sonnet-20250219": (3.00, 15.00),
-    "claude-sonnet-4-20250514": (3.00, 15.00),
-    "claude-3-opus-20240229": (15.00, 75.00),
-    "claude-3-haiku-20240307": (0.25, 1.25),
+    # Anthropic (source: https://platform.claude.com/docs/en/about-claude/pricing, checked 2026-11-27)
+    "claude-haiku-5-5": (0.10, 0.50),
+    "claude-sonnet-5-5": (2.00, 10.00),
+    "claude-opus-5-5": (4.00, 20.00),
+    "claude-fable-5-2": (8.00, 40.00),
     # OpenAI
     "gpt-4o-mini": (0.15, 0.60),
     "gpt-4o": (2.50, 10.00),
     "gpt-4.1-mini": (0.40, 1.60),
     "o3-mini": (1.10, 4.40),
     # Google Gemini
+    "gemini-4-hydrogen": (1.50, 7.50),  # paid-tier rate; free tier is $0 (ai.google.dev pricing)
+    "gemini-3.8-flash": (0.75, 3.75),  # intro rate, valid through 2026-12-31 (ai.google.dev)
     "gemini-2.5-flash": (0.15, 0.60),
     "gemini-2.5-pro": (1.25, 10.00),
     "gemini-2.0-flash": (0.10, 0.40),
@@ -135,16 +135,22 @@ MODEL_PRICING_PER_1M: dict[str, tuple[float, float]] = {
 
 DEFAULT_PRICING_PER_1M: tuple[float, float] = (2.00, 8.00)
 
+# Claude Haiku 5.5 costs more when the prompt is over 100,000 input tokens.
+LONG_PROMPT_THRESHOLD_TOKENS = 100_000
+LONG_PROMPT_PRICING_PER_1M: dict[str, tuple[float, float]] = {
+    "claude-haiku-5-5": (0.50, 2.50),
+}
+
 # Keep backward-compatible default model list (Anthropic + popular multi-provider models)
 SUPPORTED_MODELS: list[str] = [
-    "claude-3-5-haiku-20241022",
-    "claude-3-5-sonnet-20241022",
-    "claude-3-7-sonnet-20250219",
-    "claude-sonnet-4-20250514",
-    "claude-3-opus-20240229",
+    "claude-haiku-5-5",
+    "claude-sonnet-5-5",
+    "claude-opus-5-5",
+    "claude-fable-5-2",
     "gpt-4o-mini",
     "gpt-4o",
-    "gemini-2.5-flash",
+    "gemini-4-hydrogen",
+    "gemini-3.8-flash",
     "llama-3.3-70b-versatile",
     "deepseek-chat",
 ]
@@ -182,6 +188,8 @@ def _resolve_pricing(model: str) -> tuple[float, float]:
 def calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
     """Calculate USD cost for a request given model and token counts."""
     in_per_1m, out_per_1m = _resolve_pricing(model)
+    if input_tokens > LONG_PROMPT_THRESHOLD_TOKENS:
+        in_per_1m, out_per_1m = LONG_PROMPT_PRICING_PER_1M.get(model, (in_per_1m, out_per_1m))
     cost = (max(0, input_tokens) / 1_000_000.0) * in_per_1m + (
         max(0, output_tokens) / 1_000_000.0
     ) * out_per_1m
