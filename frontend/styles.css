@@ -1,17 +1,70 @@
 /* Burner Key — technical spec-sheet theme (Owner: Kerim)
-   Paper background, white panels, 1px ink rules, single red accent. */
+   Paper background, white panels, 1px ink rules, single red accent.
+   All colours are semantic tokens so the dark theme is a straight remap. */
 
 :root {
-  --paper: #f4f4f0;
-  --panel: #ffffff;
-  --ink: #141414;
-  --red: #e63946;
+  color-scheme: light;
+  --bg: #f4f4f0; /* page */
+  --tool: #f4f4f0; /* 01 form panel */
+  --panel: #ffffff; /* data panels */
+  --field: #ffffff; /* inputs, segmented controls */
+  --hover: #f4f4f0;
+  --row-hover: #fafaf7;
+  --strip: #efefea; /* 03 log head strip */
+  --line: #141414; /* 1px rules */
+  --fg: #141414;
   --mute: #6e6e68;
-  --faint: #dcdcd5;
-  --cell: #e6e6e0;
+  --mute-2: #9a9a93;
+  --placeholder: #a3a39c;
+  --disabled: #b3b3ac;
+  --faint: #dcdcd5; /* row separators */
+  --cell: #e6e6e0; /* meter off */
+  --fill: #141414; /* active / inverted */
+  --on-fill: #ffffff;
+  --on-fill-mute: #a3a39c;
+  --scroll: #141414;
+  --red: #e63946;
+  --on-red: #ffffff;
+  --term-base: #111111;
   --sans: "Inter Tight", "Helvetica Neue", Arial, sans-serif;
   --mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, Consolas, monospace;
   --gap: 8px;
+}
+
+/* Industrial dark: the same spec sheet printed on black. No slate/navy, no glow. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0a0a0a;
+  --tool: #111111;
+  --panel: #0d0d0d;
+  --field: #0a0a0a;
+  --hover: #1a1a1a;
+  --row-hover: #141414;
+  --strip: #151515;
+  --line: #262626;
+  --fg: #ededed;
+  --mute: #888888;
+  --mute-2: #666666;
+  --placeholder: #555555;
+  --disabled: #444444;
+  --faint: #1c1c1c;
+  --cell: #222222;
+  --fill: #ededed;
+  --on-fill: #0a0a0a;
+  --on-fill-mute: #555555;
+  --scroll: #3a3a3a;
+  --term-base: #050505;
+}
+
+/* Small outlined chips/controls need a brighter rule than the #262626 panel borders to stay legible. */
+:root[data-theme="dark"] .opt .box,
+:root[data-theme="dark"] .code:not(.err),
+:root[data-theme="dark"] .st:not(.st-dead):not(.st-burned):not(.st-quota),
+:root[data-theme="dark"] .scen button b,
+:root[data-theme="dark"] .tiny,
+:root[data-theme="dark"] .mini:not(:disabled),
+:root[data-theme="dark"] .burn:not(:disabled):not(.confirm) {
+  border-color: #5a5a5a;
 }
 
 *,
@@ -35,8 +88,8 @@ body {
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
-  background: var(--paper);
-  color: var(--ink);
+  background: var(--bg);
+  color: var(--fg);
   font: 13px/1.35 var(--sans);
   -webkit-font-smoothing: antialiased;
 }
@@ -71,7 +124,7 @@ code {
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--ink) transparent;
+  scrollbar-color: var(--scroll) transparent;
 }
 
 ::-webkit-scrollbar {
@@ -80,7 +133,7 @@ code {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--ink);
+  background: var(--scroll);
 }
 
 :focus-visible {
@@ -96,7 +149,7 @@ code {
   height: 40px;
   flex: none;
   background: var(--panel);
-  border-bottom: 1px solid var(--ink);
+  border-bottom: 1px solid var(--line);
 }
 
 .brand {
@@ -104,7 +157,7 @@ code {
   align-items: center;
   gap: 10px;
   padding: 0 14px;
-  border-right: 1px solid var(--ink);
+  border-right: 1px solid var(--line);
 }
 
 .brand-mark {
@@ -124,7 +177,7 @@ code {
   display: flex;
   align-items: center;
   padding: 0 12px;
-  border-left: 1px solid var(--ink);
+  border-left: 1px solid var(--line);
   font-family: var(--mono);
   font-size: 10.5px;
   text-transform: uppercase;
@@ -142,7 +195,7 @@ code {
 }
 
 .topbar .clock {
-  color: var(--ink);
+  color: var(--fg);
 }
 
 .topbar .views .seg button {
@@ -150,19 +203,19 @@ code {
 }
 
 .topbar .views .seg button[aria-pressed="false"] {
-  color: #9a9a93;
+  color: var(--mute-2);
 }
 
 .topbar .views .seg button[aria-pressed="false"]:hover {
-  color: var(--ink);
+  color: var(--fg);
 }
 
 /* ---------- Segmented controls ---------- */
 
 .seg {
   display: inline-flex;
-  border: 1px solid var(--ink);
-  background: var(--panel);
+  border: 1px solid var(--line);
+  background: var(--field);
 }
 
 .seg.full {
@@ -176,7 +229,7 @@ code {
   margin: 0;
   padding: 4px 10px;
   border: 0;
-  border-left: 1px solid var(--ink);
+  border-left: 1px solid var(--line);
   background: transparent;
   font-family: var(--mono);
   font-size: 11px;
@@ -202,12 +255,12 @@ code {
 }
 
 .seg button:hover {
-  background: var(--paper);
+  background: var(--hover);
 }
 
 .seg button[aria-pressed="true"] {
-  background: var(--ink);
-  color: var(--panel);
+  background: var(--fill);
+  color: var(--on-fill);
 }
 
 /* ---------- Workspace layout ---------- */
@@ -282,7 +335,7 @@ body[data-view="dashboard"] .dash {
   min-height: 0;
   min-width: 0;
   background: var(--panel);
-  border: 1px solid var(--ink);
+  border: 1px solid var(--line);
 }
 
 .panel-head {
@@ -293,7 +346,7 @@ body[data-view="dashboard"] .dash {
   flex: none;
   min-height: 30px;
   padding: 0 8px;
-  border-bottom: 1px solid var(--ink);
+  border-bottom: 1px solid var(--line);
   font-family: var(--mono);
   font-size: 11px;
   font-weight: 500;
@@ -330,13 +383,13 @@ body[data-view="dashboard"] .dash {
 
 /* 01 — tool/form panel: paper tone so it reads as a control surface, not a data list */
 .panel-tool {
-  background: var(--paper);
+  background: var(--tool);
 }
 
 /* 03 — live log: grey head strip separates the stream from the key table above */
 .panel-log > .panel-head,
 .panel-log .tbl th {
-  background: #efefea;
+  background: var(--strip);
 }
 
 /* ---------- Form fields ---------- */
@@ -358,7 +411,7 @@ body[data-view="dashboard"] .dash {
 }
 
 .label b {
-  color: var(--ink);
+  color: var(--fg);
   font-weight: 500;
 }
 
@@ -370,9 +423,9 @@ body[data-view="dashboard"] .dash {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   height: 30px;
-  border: 1px solid var(--ink);
+  border: 1px solid var(--line);
   border-top: 0;
-  background: var(--panel);
+  background: var(--field);
 }
 
 .custom-row-prefix {
@@ -398,8 +451,8 @@ body[data-view="dashboard"] .dash {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-right: 1px solid var(--ink);
-  background: var(--paper);
+  border-right: 1px solid var(--line);
+  background: var(--hover);
   font-family: var(--mono);
   font-size: 11px;
   font-weight: 700;
@@ -423,7 +476,7 @@ body[data-view="dashboard"] .dash {
 }
 
 .custom-num::placeholder {
-  color: #a3a39c;
+  color: var(--placeholder);
 }
 
 .custom-num::-webkit-inner-spin-button,
@@ -438,7 +491,7 @@ body[data-view="dashboard"] .dash {
 
 .custom-units {
   border: 0;
-  border-left: 1px solid var(--ink);
+  border-left: 1px solid var(--line);
   height: 100%;
 }
 
@@ -458,9 +511,9 @@ body[data-view="dashboard"] .dash {
   width: 100%;
   height: 30px;
   padding: 0 8px;
-  border: 1px solid var(--ink);
+  border: 1px solid var(--line);
   border-radius: 0;
-  background: var(--panel);
+  background: var(--field);
   font-size: 13px;
 }
 
@@ -471,14 +524,14 @@ body[data-view="dashboard"] .dash {
 }
 
 .input::placeholder {
-  color: #a3a39c;
+  color: var(--placeholder);
 }
 
 .select {
   appearance: none;
   padding-right: 24px;
-  background-image: linear-gradient(45deg, transparent 50%, var(--ink) 50%),
-    linear-gradient(-45deg, transparent 50%, var(--ink) 50%);
+  background-image: linear-gradient(45deg, transparent 50%, var(--fg) 50%),
+    linear-gradient(-45deg, transparent 50%, var(--fg) 50%);
   background-position: right 12px center, right 8px center;
   background-size: 4px 4px;
   background-repeat: no-repeat;
@@ -489,8 +542,8 @@ body[data-view="dashboard"] .dash {
 .opts {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  border-top: 1px solid var(--ink);
-  border-left: 1px solid var(--ink);
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
 }
 
 .opts.one {
@@ -504,8 +557,8 @@ body[data-view="dashboard"] .dash {
   gap: 6px;
   min-width: 0;
   padding: 5px 6px;
-  border-right: 1px solid var(--ink);
-  border-bottom: 1px solid var(--ink);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
   font-family: var(--mono);
   font-size: 11px;
   cursor: pointer;
@@ -522,7 +575,7 @@ body[data-view="dashboard"] .dash {
   flex: none;
   width: 9px;
   height: 9px;
-  border: 1px solid var(--ink);
+  border: 1px solid var(--line);
 }
 
 .opt input[type="radio"] + .box {
@@ -549,11 +602,11 @@ body[data-view="dashboard"] .dash {
 }
 
 .opt:hover {
-  background: var(--paper);
+  background: var(--hover);
 }
 
 .opt:has(input:checked) .box {
-  background: var(--ink);
+  background: var(--fill);
 }
 
 .opt:has(input:focus-visible) {
@@ -579,9 +632,9 @@ body[data-view="dashboard"] .dash {
   width: 100%;
   height: 36px;
   padding: 0 12px;
-  border: 1px solid var(--ink);
-  background: var(--ink);
-  color: var(--panel);
+  border: 1px solid var(--line);
+  background: var(--fill);
+  color: var(--on-fill);
   font-family: var(--mono);
   font-size: 12px;
   font-weight: 700;
@@ -590,6 +643,7 @@ body[data-view="dashboard"] .dash {
 
 .btn-primary:hover:not(:disabled) {
   background: var(--red);
+  color: var(--on-red);
   border-color: var(--red);
 }
 
@@ -614,7 +668,7 @@ body[data-view="dashboard"] .dash {
 }
 
 .btn-text:hover {
-  color: var(--ink);
+  color: var(--fg);
   text-decoration: underline;
 }
 
@@ -622,7 +676,7 @@ body[data-view="dashboard"] .dash {
 
 .reveal {
   margin-top: 10px;
-  border: 1px solid var(--ink);
+  border: 1px solid var(--line);
 }
 
 .reveal-head {
@@ -631,13 +685,13 @@ body[data-view="dashboard"] .dash {
   justify-content: space-between;
   padding: 3px 4px 3px 8px;
   background: repeating-linear-gradient(-45deg, var(--red) 0 4px, var(--panel) 4px 8px);
-  border-bottom: 1px solid var(--ink);
+  border-bottom: 1px solid var(--line);
 }
 
 .reveal-head span {
   padding: 1px 5px;
-  background: var(--ink);
-  color: var(--panel);
+  background: var(--fill);
+  color: var(--on-fill);
   font-family: var(--mono);
   font-size: 10px;
   letter-spacing: 0.08em;
@@ -646,7 +700,7 @@ body[data-view="dashboard"] .dash {
 .reveal-head button {
   width: 20px;
   height: 20px;
-  border: 1px solid var(--ink);
+  border: 1px solid var(--line);
   background: var(--panel);
   font-family: var(--mono);
   line-height: 1;
@@ -679,7 +733,7 @@ body[data-view="dashboard"] .dash {
   z-index: 1;
   padding: 5px 6px;
   background: var(--panel);
-  border-bottom: 1px solid var(--ink);
+  border-bottom: 1px solid var(--line);
   font-family: var(--mono);
   font-size: 10px;
   font-weight: 500;
@@ -724,7 +778,7 @@ body[data-view="dashboard"] .dash {
   background: none;
   font: inherit;
   letter-spacing: inherit;
-  color: var(--ink);
+  color: var(--fg);
   text-decoration: underline;
   text-underline-offset: 3px;
 }
@@ -767,7 +821,7 @@ body[data-view="dashboard"] .dash {
 .mini {
   height: 22px;
   padding: 0 8px;
-  border: 1px solid var(--ink);
+  border: 1px solid var(--line);
   background: var(--panel);
   font-family: var(--mono);
   font-size: 10.5px;
@@ -777,13 +831,13 @@ body[data-view="dashboard"] .dash {
 }
 
 .mini:hover:not(:disabled) {
-  background: var(--ink);
-  color: var(--panel);
+  background: var(--fill);
+  color: var(--on-fill);
 }
 
 .mini:disabled {
   border-color: var(--faint);
-  color: #b3b3ac;
+  color: var(--disabled);
   cursor: not-allowed;
 }
 
@@ -794,18 +848,18 @@ body[data-view="dashboard"] .dash {
 @keyframes key-flash {
   0%,
   50% {
-    background: var(--ink);
-    color: var(--panel);
+    background: var(--fill);
+    color: var(--on-fill);
   }
   25%,
   75% {
     background: var(--red);
-    color: var(--panel);
+    color: var(--on-red);
   }
 }
 
 .tbl tr:hover td {
-  background: #fafaf7;
+  background: var(--row-hover);
 }
 
 .tbl .empty td {
@@ -859,7 +913,7 @@ tr.is-dead .k-name-text {
 }
 
 .meter i.on {
-  background: var(--ink);
+  background: var(--fill);
 }
 
 .meter.hot i.on {
@@ -891,7 +945,7 @@ tr.is-dead .k-name-text {
 .st {
   display: inline-block;
   padding: 1px 5px;
-  border: 1px solid var(--ink);
+  border: 1px solid var(--line);
   font-family: var(--mono);
   font-size: 10px;
   letter-spacing: 0.06em;
@@ -910,7 +964,7 @@ tr.is-dead .k-name-text {
 .st-quota {
   background: var(--red);
   border-color: var(--red);
-  color: var(--panel);
+  color: var(--on-red);
 }
 
 /* Status code chip */
@@ -919,7 +973,7 @@ tr.is-dead .k-name-text {
   display: inline-block;
   min-width: 34px;
   padding: 0 4px;
-  border: 1px solid var(--ink);
+  border: 1px solid var(--line);
   font-family: var(--mono);
   font-size: 11px;
   font-weight: 700;
@@ -930,7 +984,7 @@ tr.is-dead .k-name-text {
 .code.err {
   background: var(--red);
   border-color: var(--red);
-  color: var(--panel);
+  color: var(--on-red);
 }
 
 /* ---------- BURN ---------- */
@@ -940,7 +994,7 @@ tr.is-dead .k-name-text {
   white-space: nowrap;
   height: 26px;
   padding: 0 8px;
-  border: 1px solid var(--ink);
+  border: 1px solid var(--line);
   background: var(--panel);
   font-family: var(--mono);
   font-size: 11px;
@@ -958,15 +1012,15 @@ tr.is-dead .k-name-text {
 }
 
 .burn:hover:not(:disabled) span {
-  background: var(--ink);
-  color: var(--panel);
+  background: var(--fill);
+  color: var(--on-fill);
 }
 
 .burn.confirm,
 .burn.confirm:hover {
   background: var(--red);
   border-color: var(--red);
-  color: var(--panel);
+  color: var(--on-red);
   animation: blink 0.5s steps(1) infinite;
 }
 
@@ -974,7 +1028,7 @@ tr.is-dead .k-name-text {
 .burn.confirm:hover span {
   padding: 0;
   background: none;
-  color: var(--panel);
+  color: var(--on-red);
   letter-spacing: 0.01em;
 }
 
@@ -1021,8 +1075,8 @@ tr.is-dead .k-name-text {
 .scen {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  border-top: 1px solid var(--ink);
-  border-bottom: 1px solid var(--ink);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 
 .scen button {
@@ -1031,8 +1085,8 @@ tr.is-dead .k-name-text {
   gap: 6px;
   padding: 8px;
   border: 0;
-  border-left: 1px solid var(--ink);
-  background: var(--paper);
+  border-left: 1px solid var(--line);
+  background: var(--hover);
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0;
@@ -1047,7 +1101,7 @@ tr.is-dead .k-name-text {
 
 .scen button b {
   padding: 0 4px;
-  border: 1px solid var(--ink);
+  border: 1px solid var(--line);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1058,22 +1112,22 @@ tr.is-dead .k-name-text {
 
 .scen button:hover {
   background: var(--red);
-  color: var(--panel);
+  color: var(--on-red);
 }
 
 .scen button:hover b {
-  border-color: var(--panel);
+  border-color: var(--on-red);
 }
 
 .scen button.is-running {
   background: repeating-linear-gradient(-45deg, var(--red) 0 6px, #f06a74 6px 12px);
   background-size: 17px 17px;
-  color: var(--panel);
+  color: var(--on-red);
   animation: hazard 0.6s linear infinite;
 }
 
 .scen button.is-running b {
-  border-color: var(--panel);
+  border-color: var(--on-red);
 }
 
 @keyframes hazard {
@@ -1085,12 +1139,12 @@ tr.is-dead .k-name-text {
 /* 04 — simulator = an outside app: inverted header + dark terminal console */
 
 .sim-head {
-  background: var(--ink);
-  color: var(--panel);
+  background: var(--fill);
+  color: var(--on-fill);
 }
 
 .sim-head .muted {
-  color: #a3a39c;
+  color: var(--on-fill-mute);
 }
 
 .sim-body {
@@ -1105,7 +1159,7 @@ tr.is-dead .k-name-text {
 }
 
 .term {
-  --term-bg: #111111;
+  --term-bg: var(--term-base);
   --term-fg: #ededed;
   --term-mute: #8a8a85;
   --term-line: #2a2a2a;
@@ -1230,7 +1284,7 @@ body[data-view="simulator"] .sim-body {
 }
 
 body[data-view="simulator"] .sim-controls {
-  border-right: 1px solid var(--ink);
+  border-right: 1px solid var(--line);
 }
 
 body[data-view="simulator"] .sim-controls .scen {
@@ -1239,7 +1293,7 @@ body[data-view="simulator"] .sim-controls .scen {
 
 body[data-view="simulator"] .sim-controls .scen button {
   border-left: 0;
-  border-top: 1px solid var(--ink);
+  border-top: 1px solid var(--line);
 }
 
 body[data-view="simulator"] .sim-controls .scen button:first-child {
@@ -1298,7 +1352,7 @@ body[data-view="simulator"] .sim-controls .scen button:first-child {
     width: 100%;
     height: 40px;
     margin-left: 0;
-    border-top: 1px solid var(--ink);
+    border-top: 1px solid var(--line);
     border-left: 0;
   }
 
@@ -1321,10 +1375,193 @@ body[data-view="simulator"] .sim-controls .scen button:first-child {
 
   .scen button {
     border-left: 0;
-    border-top: 1px solid var(--ink);
+    border-top: 1px solid var(--line);
   }
 
   .scen button:first-child {
     border-top: 0;
+  }
+}
+
+/* ---------- Model select-all ---------- */
+
+.label-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tiny {
+  height: 18px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  background: var(--field);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg);
+}
+
+.tiny:hover:not(:disabled) {
+  background: var(--fill);
+  color: var(--on-fill);
+}
+
+.tiny:disabled {
+  color: var(--disabled);
+  cursor: not-allowed;
+}
+
+/* ---------- Vault: MOCK TEST | GERÇEK KEY ---------- */
+
+.badge {
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--mute);
+}
+
+.label b.badge {
+  color: var(--mute);
+}
+
+.label b.badge-live {
+  background: var(--red);
+  border-color: var(--red);
+  color: var(--on-red);
+}
+
+.label b.badge-wait {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.vault-pane > .opts {
+  border-top: 0;
+}
+
+.live-new {
+  border: 1px solid var(--line);
+  border-top: 0;
+}
+
+.live-new .select {
+  border: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.live-new.is-off {
+  opacity: 0.4;
+}
+
+.secret-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  background: var(--field);
+}
+
+.secret-row .input {
+  border: 0;
+  background: transparent;
+}
+
+.eye {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: var(--field);
+  color: var(--fg);
+}
+
+.eye:hover:not(:disabled) {
+  background: var(--fill);
+  color: var(--on-fill);
+}
+
+.eye[aria-pressed="true"] {
+  color: var(--red);
+}
+
+.hint {
+  margin: 5px 0 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--mute);
+}
+
+/* ---------- Theme toggle ---------- */
+
+.topbar .theme .seg button {
+  padding: 5px 10px;
+}
+
+.topbar .theme .seg button[aria-pressed="false"] {
+  color: var(--mute-2);
+}
+
+.topbar .theme .seg button[aria-pressed="false"]:hover {
+  color: var(--fg);
+}
+
+/* ---------- Drag-to-resize column dividers (TÜMÜ view only) ---------- */
+
+#workspace {
+  position: relative;
+}
+
+.col-resizer {
+  position: absolute;
+  top: var(--gap);
+  bottom: var(--gap);
+  z-index: 5;
+  width: 10px;
+  margin-left: -5px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.col-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 2px;
+  background: transparent;
+}
+
+.col-resizer:hover::after,
+.col-resizer:focus-visible::after,
+.col-resizer.is-dragging::after {
+  background: var(--red);
+}
+
+.col-resizer:focus-visible {
+  outline: none;
+}
+
+body.is-resizing,
+body.is-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+@media (max-width: 1279px) {
+  .col-resizer {
+    display: none;
+  }
+}
+
+@media (max-width: 820px) {
+  .topbar .theme {
+    border-left: 0;
   }
 }

@@ -11,6 +11,12 @@
     href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
   />
   <link rel="stylesheet" href="./styles.css" />
+  <script>
+    // Apply the saved theme before first paint so dark mode doesn't flash white.
+    try {
+      if (localStorage.getItem("burner:theme") === "dark") document.documentElement.dataset.theme = "dark";
+    } catch (e) {}
+  </script>
 </head>
 <body data-view="split">
   <!-- Top bar (Utku) -->
@@ -22,6 +28,12 @@
     <div class="topbar-cell meta">BYOK Proxy · Bütçe / TTL / Kill Switch</div>
     <div class="spacer"></div>
     <div class="topbar-cell meta clock" id="clock">--:--:--</div>
+    <div class="topbar-cell theme">
+      <div class="seg" role="group" aria-label="Tema">
+        <button data-theme-set="light" type="button" aria-pressed="true">Light</button>
+        <button data-theme-set="dark" type="button" aria-pressed="false">Dark</button>
+      </div>
+    </div>
     <div class="topbar-cell views">
       <div class="seg" role="group" aria-label="Görünüm">
         <button data-view-mode="split" type="button" aria-pressed="true">Tümü</button>
@@ -38,12 +50,18 @@
     <section id="simulator-col">
       <div id="simulator-root"></div>
     </section>
+    <div class="col-resizer" role="separator" tabindex="0" aria-orientation="vertical"
+      aria-label="01 ile 02/03 arasındaki genişlik" aria-valuemin="18" aria-valuemax="50" hidden></div>
+    <div class="col-resizer" role="separator" tabindex="0" aria-orientation="vertical"
+      aria-label="02/03 ile 04 arasındaki genişlik" aria-valuemin="43" aria-valuemax="75" hidden></div>
   </main>
 
   <script type="module">
     import { initDashboard } from "./dashboard.js";
     import { initSimulator } from "./simulator.js";
+    import { initLayout } from "./layout.js";
 
+    initLayout();
     initDashboard();
     initSimulator();
   </script>

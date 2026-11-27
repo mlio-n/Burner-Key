@@ -6,12 +6,20 @@
 
 import {
   createKey,
+  createMasterKey,
   fetchKeys,
   fetchLogs,
   fetchMasterKeys,
   fetchModels,
+  fetchProviders,
   revokeKey,
 } from "./api.js";
+
+const EYE_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="6.5" y="6.5" width="3" height="3" fill="currentColor"/></svg>`;
+const EYE_OFF_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M2 14L14 2" stroke="currentColor" stroke-width="1.3"/></svg>`;
+
+// Providers offered in "GERÇEK KEY" mode (mock has its own tab; custom needs a base URL).
+const LIVE_EXCLUDED = new Set(["mock", "custom"]);
 
 const TTL_OPTIONS = [
   ["15M", 15],
@@ -54,6 +62,12 @@ const state = {
   logsSig: "",
   // Raw keys are only returned once by POST /admin/keys, so TEST → works for keys made in this tab.
   rawKeys: new Map(),
+  // Vault: "mock" uses the free local mock vault, "live" a real provider master key.
+  vaultMode: "mock",
+  liveVault: "new", // "new" = key typed into the form, otherwise a saved master key id
+  vaults: [],
+  providers: [],
+  allModels: [],
 };
 
 const rowSigs = new Map();
@@ -154,9 +168,34 @@ function renderShell(root) {
           </div>
 
           <div class="field">
-            <div class="label"><span>Kasa (Master Key)</span></div>
-            <div id="vaultList" class="opts one">
-              <div class="opt"><span class="txt muted">Yükleniyor…</span></div>
+            <div class="label"><span>Kasa (Master Key)</span><b id="vaultBadge" class="badge">MOCK</b></div>
+            <div id="vaultTabs" class="seg full" role="group" aria-label="Kasa modu">
+              <button type="button" data-val="mock" aria-pressed="true">Mock Test</button>
+              <button type="button" data-val="live" aria-pressed="false">Gerçek Key</button>
+            </div>
+            <div id="vaultMockPane" class="vault-pane">
+              <div id="vaultList" class="opts one">
+                <div class="opt"><span class="txt muted">Yükleniyor…</span></div>
+              </div>
+            </div>
+            <div id="vaultLivePane" class="vault-pane" hidden>
+              <div id="liveSaved" class="opts one"></div>
+              <div id="liveNewRow" class="live-new">
+                <select id="liveProvider" class="select" aria-label="Sağlayıcı"></select>
+                <div class="secret-row">
+                  <input
+                    id="liveKey"
+                    class="input mono"
+                    type="password"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="Master API key"
+                    aria-label="Gerçek master API key"
+                  />
+                  <button id="liveKeyEye" class="eye" type="button" aria-label="Anahtarı göster" aria-pressed="false">${EYE_ICON}</button>
+                </div>
+              </div>
+              <p class="hint">Key yerel backend'de şifrelenip saklanır, tarayıcıda tutulmaz. Gerçek key ile yapılan istekler kredi harcar.</p>
             </div>
           </div>
 
@@ -206,7 +245,13 @@ function renderShell(root) {
           </div>
 
           <div class="field">
-            <div class="label"><span>İzinli Modeller</span><b id="modelCount">0 seçili</b></div>
+            <div class="label">
+              <span>İzinli Modeller</span>
+              <span class="label-end">
+                <b id="modelCount">0 seçili</b>
+                <button id="modelToggle" type="button" class="tiny">Hepsini seç</button>
+              </span>
+            </div>
             <div id="modelsContainer" class="opts">
               <div class="opt"><span class="txt muted">Yükleniyor…</span></div>
             </div>
@@ -598,53 +643,245 @@ export async function initDashboard() {
     el.addEventListener("change", syncCustomControls);
   });
 
-  function updateModelCount() {
-    const n = document.querySelectorAll('input[name="allowed_model"]:checked').length;
-    document.getElementById("modelCount").textContent = `${n} seçili`;
+  /* ----- Models + select-all toggle ----- */
+
+  function modelInputs() {
+    return Array.from(document.querySelectorAll('input[name="allowed_model"]'));
   }
 
-  async function loadModels() {
+  function updateModelCount() {
+    const inputs = modelInputs();
+    const n = inputs.filter((el) => el.checked).length;
+    document.getElementById("modelCount").textContent = `${n} seçili`;
+    const toggle = document.getElementById("modelToggle");
+    const allOn = inputs.length > 0 && n === inputs.length;
+    toggle.textContent = allOn ? "Hepsini kaldır" : "Hepsini seç";
+    toggle.disabled = inputs.length === 0;
+  }
+
+  function renderModels(models) {
     const container = document.getElementById("modelsContainer");
-    try {
-      const models = await fetchModels();
-      container.innerHTML = models
-        .map(
-          (m, idx) => `
-          <label class="opt" title="${escapeHtml(m)}">
-            <input type="checkbox" name="allowed_model" value="${escapeHtml(m)}" ${idx === 0 ? "checked" : ""} />
-            <span class="box" aria-hidden="true"></span>
-            <span class="txt">${escapeHtml(modelLabel(m))}</span>
-          </label>`
-        )
-        .join("");
-    } catch {
-      container.innerHTML = `<div class="opt"><span class="txt muted">Model listesi yüklenemedi</span></div>`;
+    const previously = new Set(modelInputs().filter((el) => el.checked).map((el) => el.value));
+    if (!models.length) {
+      container.innerHTML = `<div class="opt"><span class="txt muted">Model yok</span></div>`;
+      updateModelCount();
+      return;
     }
+    let keep = models.filter((m) => previously.has(m));
+    if (!keep.length) keep = [models[0]];
+    const checked = new Set(keep);
+    container.innerHTML = models
+      .map(
+        (m) => `
+        <label class="opt" title="${escapeHtml(m)}">
+          <input type="checkbox" name="allowed_model" value="${escapeHtml(m)}" ${checked.has(m) ? "checked" : ""} />
+          <span class="box" aria-hidden="true"></span>
+          <span class="txt">${escapeHtml(modelLabel(m))}</span>
+        </label>`
+      )
+      .join("");
     updateModelCount();
   }
 
-  async function loadVaults() {
-    const container = document.getElementById("vaultList");
+  async function loadModels() {
     try {
-      const vaults = await fetchMasterKeys();
-      if (!vaults.length) {
-        container.innerHTML = `<div class="opt"><span class="txt muted">Kasa yok · varsayılan kullanılacak</span></div>`;
-        return;
-      }
-      container.innerHTML = vaults
-        .map(
-          (v, idx) => `
+      state.allModels = await fetchModels();
+    } catch {
+      state.allModels = [];
+      document.getElementById("modelsContainer").innerHTML =
+        `<div class="opt"><span class="txt muted">Model listesi yüklenemedi</span></div>`;
+      updateModelCount();
+      return;
+    }
+    renderModelsForVault();
+  }
+
+  document.getElementById("modelToggle").addEventListener("click", () => {
+    const inputs = modelInputs();
+    const allOn = inputs.every((el) => el.checked);
+    inputs.forEach((el) => (el.checked = !allOn));
+    updateModelCount();
+  });
+
+  /* ----- Vault: MOCK TEST | GERÇEK KEY ----- */
+
+  const isMockVault = (v) => v.provider === "mock" || v.protocol === "mock";
+
+  function liveProviderId() {
+    if (state.liveVault === "new") return document.getElementById("liveProvider").value;
+    const saved = state.vaults.find((v) => String(v.id) === String(state.liveVault));
+    return saved ? saved.provider : "";
+  }
+
+  function liveReady() {
+    if (state.liveVault !== "new") return true;
+    return document.getElementById("liveKey").value.trim().length > 0;
+  }
+
+  function renderModelsForVault() {
+    if (state.vaultMode === "live") {
+      const provider = state.providers.find((p) => p.id === liveProviderId());
+      renderModels(provider ? provider.models : state.allModels);
+    } else {
+      renderModels(state.allModels);
+    }
+  }
+
+  function syncVaultUi() {
+    const live = state.vaultMode === "live";
+    document.getElementById("vaultMockPane").hidden = live;
+    document.getElementById("vaultLivePane").hidden = !live;
+
+    const isNew = state.liveVault === "new";
+    const newRow = document.getElementById("liveNewRow");
+    newRow.classList.toggle("is-off", !isNew);
+    document.getElementById("liveProvider").disabled = !isNew;
+    document.getElementById("liveKey").disabled = !isNew;
+    document.getElementById("liveKeyEye").disabled = !isNew;
+
+    const provider = state.providers.find((p) => p.id === document.getElementById("liveProvider").value);
+    document.getElementById("liveKey").placeholder = provider?.key_hint ? `${provider.key_hint}` : "Master API key";
+
+    const badge = document.getElementById("vaultBadge");
+    if (!live) {
+      badge.textContent = "MOCK";
+      badge.className = "badge";
+    } else if (liveReady()) {
+      badge.textContent = "● LIVE";
+      badge.className = "badge badge-live";
+    } else {
+      badge.textContent = "KEY BEKLENİYOR";
+      badge.className = "badge badge-wait";
+    }
+  }
+
+  function renderVaults() {
+    const mockVaults = state.vaults.filter(isMockVault);
+    const liveVaults = state.vaults.filter((v) => !isMockVault(v));
+    const mockContainer = document.getElementById("vaultList");
+    const checkedMock = document.querySelector('input[name="vault"]:checked')?.value;
+
+    mockContainer.innerHTML = mockVaults.length
+      ? mockVaults
+          .map(
+            (v, idx) => `
           <label class="opt" title="${escapeHtml(v.base_url || "")}">
-            <input type="radio" name="vault" value="${v.id}" ${idx === 0 ? "checked" : ""} />
+            <input type="radio" name="vault" value="${v.id}" ${
+              String(v.id) === checkedMock || (!checkedMock && idx === 0) ? "checked" : ""
+            } />
             <span class="box" aria-hidden="true"></span>
             <span class="txt">${escapeHtml(v.name)}</span>
             <span class="end">${escapeHtml(v.provider)}</span>
           </label>`
-        )
-        .join("");
-    } catch {
-      container.innerHTML = `<div class="opt"><span class="txt muted">Kasa listesi yüklenemedi</span></div>`;
+          )
+          .join("")
+      : `<div class="opt"><span class="txt muted">Mock kasa yok · varsayılan kullanılacak</span></div>`;
+
+    if (state.liveVault !== "new" && !liveVaults.some((v) => String(v.id) === String(state.liveVault))) {
+      state.liveVault = "new";
     }
+    const savedRows = liveVaults
+      .map(
+        (v) => `
+        <label class="opt" title="${escapeHtml(v.base_url || "")}">
+          <input type="radio" name="liveVault" value="${v.id}" ${String(v.id) === String(state.liveVault) ? "checked" : ""} />
+          <span class="box" aria-hidden="true"></span>
+          <span class="txt">${escapeHtml(v.name)} <span class="muted">${escapeHtml(v.key_preview)}</span></span>
+          <span class="end">${escapeHtml(v.provider)}</span>
+        </label>`
+      )
+      .join("");
+    document.getElementById("liveSaved").innerHTML = `
+      <label class="opt">
+        <input type="radio" name="liveVault" value="new" ${state.liveVault === "new" ? "checked" : ""} />
+        <span class="box" aria-hidden="true"></span>
+        <span class="txt">Yeni key gir</span>
+        <span class="end">${liveVaults.length ? `${liveVaults.length} kayıtlı` : ""}</span>
+      </label>${savedRows}`;
+    syncVaultUi();
+  }
+
+  async function loadVaults() {
+    try {
+      state.vaults = await fetchMasterKeys();
+    } catch {
+      state.vaults = [];
+      document.getElementById("vaultList").innerHTML =
+        `<div class="opt"><span class="txt muted">Kasa listesi yüklenemedi</span></div>`;
+      return;
+    }
+    renderVaults();
+  }
+
+  async function loadProviders() {
+    try {
+      state.providers = (await fetchProviders()).filter((p) => !LIVE_EXCLUDED.has(p.id));
+    } catch {
+      state.providers = [];
+    }
+    const select = document.getElementById("liveProvider");
+    select.innerHTML = state.providers
+      .map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`)
+      .join("");
+    if (state.providers.some((p) => p.id === "anthropic")) select.value = "anthropic";
+    syncVaultUi();
+  }
+
+  bindSeg("vaultTabs", (v) => {
+    state.vaultMode = v;
+    syncVaultUi();
+    renderModelsForVault();
+  });
+
+  document.getElementById("liveSaved").addEventListener("change", (e) => {
+    if (e.target.name !== "liveVault") return;
+    state.liveVault = e.target.value;
+    syncVaultUi();
+    renderModelsForVault();
+  });
+
+  document.getElementById("liveProvider").addEventListener("change", () => {
+    syncVaultUi();
+    renderModelsForVault();
+  });
+
+  document.getElementById("liveKey").addEventListener("input", syncVaultUi);
+
+  document.getElementById("liveKeyEye").addEventListener("click", (e) => {
+    const input = document.getElementById("liveKey");
+    const show = input.type === "password";
+    input.type = show ? "text" : "password";
+    const btn = e.currentTarget;
+    btn.innerHTML = show ? EYE_OFF_ICON : EYE_ICON;
+    btn.setAttribute("aria-pressed", String(show));
+    btn.setAttribute("aria-label", show ? "Anahtarı gizle" : "Anahtarı göster");
+  });
+
+  // Returns the master_key_id for the new burner key (creating a live vault entry if needed).
+  async function resolveMasterKeyId() {
+    if (state.vaultMode === "mock") {
+      const vault = document.querySelector('input[name="vault"]:checked');
+      return vault ? Number(vault.value) : null;
+    }
+    if (state.liveVault !== "new") return Number(state.liveVault);
+
+    const input = document.getElementById("liveKey");
+    const raw = input.value.trim();
+    if (!raw) throw new Error("GERÇEK MASTER KEY GİRİN VEYA KAYITLI BİR KASA SEÇİN");
+    const providerId = document.getElementById("liveProvider").value;
+    const provider = state.providers.find((p) => p.id === providerId);
+    const master = await createMasterKey({
+      name: `${provider ? provider.name : providerId} · Live`,
+      provider: providerId,
+      api_key: raw,
+    });
+    // Never keep the secret around in the page once it is stored server-side.
+    input.value = "";
+    input.type = "password";
+    state.liveVault = String(master.id);
+    await loadVaults();
+    renderModelsForVault();
+    return master.id;
   }
 
   async function refresh() {
@@ -685,16 +922,16 @@ export async function initDashboard() {
       return;
     }
 
-    const vault = document.querySelector('input[name="vault"]:checked');
     state.submitting = true;
     syncCustomControls();
     try {
+      const masterKeyId = await resolveMasterKeyId();
       const created = await createKey({
         name: document.getElementById("keyName").value.trim() || "Burner Key",
         budget_limit_usd: budgetInfo.budget,
         ttl_minutes: ttlInfo.minutes,
         allowed_models: checkedModels,
-        master_key_id: vault ? Number(vault.value) : null,
+        master_key_id: masterKeyId,
       });
 
       latestCreatedKey = created.api_key;
@@ -787,7 +1024,8 @@ export async function initDashboard() {
 
   window.addEventListener("burner:activity", refresh);
 
-  await Promise.all([loadModels(), loadVaults()]);
+  await Promise.all([loadProviders(), loadVaults()]);
+  await loadModels();
   await refresh();
   setInterval(refresh, 2000);
   setInterval(() => tickCountdowns(false), 1000);

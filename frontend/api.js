@@ -38,6 +38,17 @@ export function fetchMasterKeys() {
   return requestJson("/admin/master-keys");
 }
 
+export function fetchProviders() {
+  return requestJson("/admin/providers");
+}
+
+export function createMasterKey(payload) {
+  return requestJson("/admin/master-keys", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function fetchKeys() {
   return requestJson("/admin/keys");
 }
