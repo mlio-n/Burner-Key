@@ -1,9 +1,12 @@
 /**
- * 3rd-Party BYOK App Simulator + Header View Switcher.
+ * 3rd-Party BYOK App Simulator + top bar (view switcher, clock).
  * Owner: Utku
  */
 
-import { API_BASE, fetchModels, sendMessage } from "./api.js";
+import { fetchModels, sendMessage } from "./api.js";
+
+const VIEW_STORAGE_KEY = "burner:view";
+const LOOP_LABEL = "Sonsuz döngü";
 
 function escapeHtml(str) {
   return String(str ?? "")
@@ -13,154 +16,104 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;");
 }
 
+// "claude-3-5-haiku-20241022" -> "claude-3-5-haiku", "llama-3.3-70b-versatile" -> "llama-3.3-70b"
+// (only for display; the API still needs the full id)
+function modelLabel(model) {
+  return String(model)
+    .replace(/-\d{8}$/, "")
+    .replace(/-(versatile|latest|instruct|preview)$/, "");
+}
+
 function setupViewToggle() {
   const buttons = document.querySelectorAll("button[data-view-mode]");
-  const dashCol = document.getElementById("dashboard-col");
-  const simCol = document.getElementById("simulator-col");
-  const mainGrid = document.getElementById("main-grid");
 
   function applyMode(mode) {
-    buttons.forEach((btn) => {
-      const active = btn.dataset.viewMode === mode;
-      btn.className = active
-        ? "rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition"
-        : "rounded-lg px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-slate-200 transition";
-    });
-
-    if (mode === "split") {
-      mainGrid.className = "grid grid-cols-1 xl:grid-cols-12 gap-5 items-start";
-      dashCol.className = "xl:col-span-7";
-      simCol.className = "xl:col-span-5 xl:sticky xl:top-20";
-      dashCol.classList.remove("hidden");
-      simCol.classList.remove("hidden");
-    } else if (mode === "dashboard") {
-      mainGrid.className = "grid grid-cols-1 gap-5";
-      dashCol.className = "";
-      dashCol.classList.remove("hidden");
-      simCol.classList.add("hidden");
-    } else {
-      mainGrid.className = "grid grid-cols-1 gap-5";
-      simCol.className = "";
-      dashCol.classList.add("hidden");
-      simCol.classList.remove("hidden");
+    document.body.dataset.view = mode;
+    buttons.forEach((btn) => btn.setAttribute("aria-pressed", String(btn.dataset.viewMode === mode)));
+    try {
+      localStorage.setItem(VIEW_STORAGE_KEY, mode);
+    } catch {
+      // storage unavailable: view just isn't remembered
     }
   }
 
-  buttons.forEach((btn) => {
-    btn.addEventListener("click", () => applyMode(btn.dataset.viewMode));
-  });
+  buttons.forEach((btn) => btn.addEventListener("click", () => applyMode(btn.dataset.viewMode)));
+
+  let saved = null;
+  try {
+    saved = localStorage.getItem(VIEW_STORAGE_KEY);
+  } catch {
+    saved = null;
+  }
+  if (["split", "dashboard", "simulator"].includes(saved)) applyMode(saved);
 }
 
-// "claude-3-5-haiku-20241022" -> "claude-3-5-haiku" (only for display; the API still needs the full id)
-function modelLabel(model) {
-  return String(model).replace(/-\d{8}$/, "");
+function setupClock() {
+  const el = document.getElementById("clock");
+  if (!el) return;
+  const tick = () => {
+    el.textContent = new Date().toLocaleTimeString("tr-TR", { hour12: false });
+  };
+  tick();
+  setInterval(tick, 1000);
 }
 
 export async function initSimulator() {
   setupViewToggle();
+  setupClock();
 
   const root = document.getElementById("simulator-root");
   if (!root) return;
 
-  const displayBase = API_BASE || window.location.origin;
-
   root.innerHTML = `
-    <div class="rounded-xl border border-slate-800 bg-slate-900/70 p-4 space-y-4">
-      <!-- Header -->
-      <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
-        <div>
-          <h2 class="text-sm font-semibold text-white">
-            3. Parti BYOK AI Uygulaması (Simülatör)
-          </h2>
-          <p class="font-mono text-[11px] text-slate-400">
-            POST ${escapeHtml(displayBase)}/v1/messages
-          </p>
-        </div>
-        <span class="rounded-full border border-sky-500/30 bg-sky-500/10 px-2.5 py-0.5 text-[11px] font-medium text-sky-300">
-          Anthropic Uyumlu
-        </span>
-      </div>
+    <section class="panel sim">
+      <header class="panel-head sim-head">
+        <span><span class="idx">04</span>Simülatör · 3. Parti App</span>
+        <span class="muted">POST /v1/messages</span>
+      </header>
 
-      <!-- Key + Model -->
-      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-        <div class="sm:col-span-2">
-          <label class="block text-slate-400 mb-1">Burner Key (x-api-key)</label>
-          <input
-            id="simApiKey"
-            type="text"
-            placeholder="brk_live_... yapıştırın veya panelden üretin"
-            class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-emerald-300 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none"
-          />
+      <div class="sim-body">
+      <div class="sim-controls">
+      <div class="sim-grid">
+        <div class="field">
+          <label class="label" for="simApiKey">x-api-key</label>
+          <input id="simApiKey" class="input mono" type="text" spellcheck="false" placeholder="brk_live_…" />
         </div>
-        <div>
-          <label class="block text-slate-400 mb-1">Model</label>
-          <select
-            id="simModel"
-            class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-slate-100 focus:border-sky-500 focus:outline-none"
-          >
+        <div class="field">
+          <label class="label" for="simModel">Model</label>
+          <select id="simModel" class="select">
             <option value="claude-3-5-haiku-20241022">claude-3-5-haiku</option>
           </select>
         </div>
       </div>
 
-      <!-- Prompt Form -->
-      <form id="simPromptForm" class="flex gap-2">
+      <form id="simPromptForm" class="sim-prompt">
         <input
           id="simPromptInput"
+          class="input"
           type="text"
+          aria-label="Mesaj"
           value="Merhaba Claude, kodumu özetler misin?"
-          placeholder="3. parti uygulamadan mesaj gönder..."
-          class="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:border-sky-500 focus:outline-none"
+          placeholder="Mesaj gönder…"
         />
-        <button
-          id="simSendBtn"
-          type="submit"
-          class="rounded-lg bg-sky-600 px-4 py-2 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-50 transition"
-        >
-          Gönder
-        </button>
+        <button id="simSendBtn" type="submit" class="btn-primary"><span>GÖNDER</span><span aria-hidden="true">↵</span></button>
       </form>
 
-      <!-- Demo Attack / Guardrail Buttons -->
-      <div class="rounded-lg border border-slate-800 bg-slate-950/70 p-3 space-y-2">
-        <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-          Demo İhlal Senaryoları
-        </p>
-        <div class="flex flex-wrap gap-2">
-          <button
-            id="forbiddenModelBtn"
-            type="button"
-            class="rounded-lg border border-amber-500/40 bg-amber-500/15 px-3 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-500/25 transition"
-          >
-            Yasaklı Model Dene (Opus • 403)
-          </button>
-          <button
-            id="loopBugBtn"
-            type="button"
-            class="rounded-lg border border-rose-500/40 bg-rose-500/15 px-3 py-2 text-xs font-semibold text-rose-300 hover:bg-rose-500/25 transition"
-          >
-            Sonsuz Döngü Bug'ı Tetikle (429)
-          </button>
-        </div>
+      <div class="scen">
+        <button id="forbiddenModelBtn" type="button"><i aria-hidden="true">▶</i><b>403</b><span>Yasaklı model · Opus</span></button>
+        <button id="loopBugBtn" type="button"><i aria-hidden="true">▶</i><b>429</b><span id="loopBtnLabel">${LOOP_LABEL}</span></button>
+      </div>
       </div>
 
-      <!-- Console -->
-      <div class="rounded-lg border border-slate-800 bg-slate-950 p-3">
-        <div class="flex items-center justify-between mb-2">
-          <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-            Uygulama Yanıt Konsolu
-          </span>
-          <button id="clearConsoleBtn" type="button" class="text-[11px] text-slate-500 hover:text-slate-300">
-            Temizle
-          </button>
-        </div>
-        <div id="simConsole" class="space-y-2 max-h-96 overflow-y-auto custom-scroll pr-1">
-          <p class="py-10 text-center text-xs text-slate-500">
-            Simülatör hazır. Normal mesaj atın veya ihlal senaryolarını tetikleyin.
-          </p>
-        </div>
+      <div class="term">
+        <header class="term-head">
+          <span>Konsol <span class="term-sub">· uygulama çıktısı</span></span>
+          <button id="clearConsoleBtn" type="button" class="btn-text">Temizle</button>
+        </header>
+        <div id="simConsole" class="console" aria-live="polite"></div>
       </div>
-    </div>
+      </div>
+    </section>
   `;
 
   try {
@@ -178,6 +131,7 @@ export async function initSimulator() {
   const promptInput = document.getElementById("simPromptInput");
   const consoleEl = document.getElementById("simConsole");
   const loopBtn = document.getElementById("loopBugBtn");
+  const loopLabel = document.getElementById("loopBtnLabel");
 
   let events = [];
   let loopTimer = null;
@@ -186,42 +140,30 @@ export async function initSimulator() {
   window.addEventListener("burner:select-key", (e) => {
     if (e.detail?.apiKey) {
       keyInput.value = e.detail.apiKey;
+      // Restart the flash so repeated TEST → clicks are visible too.
+      keyInput.classList.remove("flash");
+      void keyInput.offsetWidth;
+      keyInput.classList.add("flash");
     }
   });
 
   function renderConsole() {
     if (!events.length) {
-      consoleEl.innerHTML = `
-        <p class="py-10 text-center text-xs text-slate-500">
-          Simülatör hazır. Normal mesaj atın veya ihlal senaryolarını tetikleyin.
-        </p>
-      `;
+      consoleEl.innerHTML = `<div class="console-empty">HAZIR · MESAJ GÖNDERİN VEYA BİR İHLAL SENARYOSU TETİKLEYİN</div>`;
       return;
     }
 
     consoleEl.innerHTML = events
       .map(
         (ev) => `
-        <div class="rounded-lg border p-3 text-xs ${
-          ev.ok ? "border-emerald-500/30 bg-emerald-950/20" : "border-rose-500/40 bg-rose-950/30"
-        }">
-          <div class="flex flex-wrap items-center justify-between gap-2 mb-1">
-            <div class="flex items-center gap-2">
-              <span class="rounded px-1.5 py-0.5 font-mono text-[11px] font-bold ${
-                ev.ok ? "bg-emerald-500/20 text-emerald-300" : "bg-rose-500/20 text-rose-300"
-              }">
-                ${ev.status || "ERR"} ${ev.ok ? "OK" : escapeHtml(ev.errType)}
-              </span>
-              <span class="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-semibold text-slate-300">
-                ${escapeHtml(ev.tag)}
-              </span>
-              <span class="font-mono text-[11px] text-slate-400">${escapeHtml(modelLabel(ev.model))}</span>
-            </div>
-            <span class="font-mono text-[11px] text-slate-500">
-              ${ev.tokens ? `${ev.tokens} tok • ` : ""}${ev.time}
-            </span>
+        <div class="ev ${ev.ok ? "" : "err"}">
+          <div class="ev-meta">
+            <span class="code ${ev.ok ? "" : "err"}">${ev.status || "ERR"}</span>
+            <span class="tag">${escapeHtml(ev.ok ? ev.tag : `${ev.tag} · ${ev.errType}`)}</span>
+            <span class="muted">${escapeHtml(modelLabel(ev.model))}</span>
+            <span class="end">${ev.tokens ? `${ev.tokens} TOK · ` : ""}${ev.time}</span>
           </div>
-          <p class="${ev.ok ? "text-slate-200" : "text-rose-200"}">${escapeHtml(ev.text)}</p>
+          <p>${escapeHtml(ev.text)}</p>
         </div>
       `
       )
@@ -231,7 +173,7 @@ export async function initSimulator() {
   function pushEvent(entry) {
     events = [
       {
-        time: new Date().toLocaleTimeString("tr-TR"),
+        time: new Date().toLocaleTimeString("tr-TR", { hour12: false }),
         ...entry,
       },
       ...events.slice(0, 29),
@@ -248,7 +190,7 @@ export async function initSimulator() {
         errType: "NO_KEY",
         tag,
         model: targetModel,
-        text: "Önce soldaki panelden bir Burner Key üretin veya buraya yapıştırın.",
+        text: "Önce panelden bir Burner Key üretin veya buraya yapıştırın.",
       });
       return { ok: false, status: 0 };
     }
@@ -297,10 +239,12 @@ export async function initSimulator() {
       clearInterval(loopTimer);
       loopTimer = null;
     }
-    loopBtn.textContent = "Sonsuz Döngü Bug'ı Tetikle (429)";
-    loopBtn.className =
-      "rounded-lg border border-rose-500/40 bg-rose-500/15 px-3 py-2 text-xs font-semibold text-rose-300 hover:bg-rose-500/25 transition";
+    loopLabel.textContent = LOOP_LABEL;
+    loopBtn.classList.remove("is-running");
+    loopBtn.querySelector("i").textContent = "▶";
   }
+
+  renderConsole();
 
   document.getElementById("simPromptForm").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -311,11 +255,7 @@ export async function initSimulator() {
 
   document.getElementById("forbiddenModelBtn").addEventListener("click", async () => {
     if (loopTimer) return;
-    await runProxyCall(
-      "claude-3-opus-20240229",
-      "İzinsiz pahalı model isteği gönderiliyor.",
-      "YASAKLI MODEL"
-    );
+    await runProxyCall("claude-3-opus-20240229", "İzinsiz pahalı model isteği gönderiliyor.", "YASAKLI MODEL");
   });
 
   loopBtn.addEventListener("click", () => {
@@ -326,19 +266,15 @@ export async function initSimulator() {
 
     loopCount = 0;
     let inFlight = false;
-    loopBtn.className =
-      "rounded-lg border border-rose-500 bg-rose-600 px-3 py-2 text-xs font-semibold text-white loop-active-ring transition";
+    loopBtn.classList.add("is-running");
+    loopBtn.querySelector("i").textContent = "■";
 
     loopTimer = setInterval(async () => {
       if (inFlight) return;
       inFlight = true;
       loopCount += 1;
-      loopBtn.textContent = `Döngüyü Durdur (${loopCount} istek)`;
-      const res = await runProxyCall(
-        modelSelect.value,
-        `Agent loop retry #${loopCount}`,
-        "SONSUZ DÖNGÜ"
-      );
+      loopLabel.textContent = `Durdur · ${String(loopCount).padStart(3, "0")} REQ`;
+      const res = await runProxyCall(modelSelect.value, `Agent loop retry #${loopCount}`, "SONSUZ DÖNGÜ");
       inFlight = false;
       if (!res.ok) {
         stopLoop();

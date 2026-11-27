@@ -34,6 +34,10 @@ export function fetchModels() {
   return requestJson("/admin/models");
 }
 
+export function fetchMasterKeys() {
+  return requestJson("/admin/master-keys");
+}
+
 export function fetchKeys() {
   return requestJson("/admin/keys");
 }
