@@ -6,6 +6,7 @@ import json
 import os
 import secrets
 import sqlite3
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -137,6 +138,14 @@ def init_db() -> None:
                 created_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS reservations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                burner_key_id INTEGER NOT NULL REFERENCES burner_keys(id) ON DELETE CASCADE,
+                amount_usd REAL NOT NULL,
+                created_at REAL NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_reservations_key ON reservations(burner_key_id);
             CREATE INDEX IF NOT EXISTS idx_burner_keys_api_key ON burner_keys(api_key);
             CREATE INDEX IF NOT EXISTS idx_request_logs_id ON request_logs(id DESC);
             """
@@ -228,6 +237,19 @@ def _log_request(
 # ---------------------------------------------------------------------------
 
 
+# In-flight budget reservations: stops parallel requests from overspending a budget.
+RESERVATION_TTL_SECONDS = 120.0
+DEFAULT_ESTIMATE_TOKENS = (500, 500)  # (input, output) used before a key has any history
+
+
+def _estimate_request_cost(row: sqlite3.Row, model: str) -> float:
+    """Estimate one request's cost: the key's average so far, or a default guess."""
+    count = int(row["request_count"])
+    if count > 0:
+        return float(row["spent_usd"]) / count
+    return calculate_cost(model, *DEFAULT_ESTIMATE_TOKENS)
+
+
 def check_key(key: str, model: str) -> tuple[int | None, int | None, str | None]:
     """Validate a burner key for a target model.
 
@@ -242,6 +264,7 @@ def check_key(key: str, model: str) -> tuple[int | None, int | None, str | None]
         return None, 401, "Missing burner API key."
 
     with get_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")  # lock: check + reserve must be one atomic step
         row = conn.execute(
             "SELECT * FROM burner_keys WHERE api_key = ?", (cleaned_key,)
         ).fetchone()
@@ -269,11 +292,32 @@ def check_key(key: str, model: str) -> tuple[int | None, int | None, str | None]
             _log_request(conn, row["id"], row["name"], model, 403, msg)
             return None, 403, msg
 
-        if float(row["spent_usd"]) >= float(row["budget_limit_usd"]):
+        spent = float(row["spent_usd"])
+        budget = float(row["budget_limit_usd"])
+        now_ts = time.time()
+        conn.execute(
+            "DELETE FROM reservations WHERE created_at < ?",
+            (now_ts - RESERVATION_TTL_SECONDS,),
+        )
+        pending = conn.execute(
+            "SELECT COUNT(*), COALESCE(SUM(amount_usd), 0.0) FROM reservations WHERE burner_key_id = ?",
+            (row["id"],),
+        ).fetchone()
+        pending_count, pending_usd = int(pending[0]), float(pending[1])
+        budget_cap = budget / 4.0  # a single reservation never holds more than 25% of the budget
+        estimate = min(_estimate_request_cost(row, model), budget_cap)
+
+        # Block when the budget is spent, or when requests already in flight
+        # have reserved the rest of it.
+        if spent >= budget or (pending_count > 0 and spent + pending_usd + estimate > budget):
             msg = "Burner key budget limit exceeded."
             _log_request(conn, row["id"], row["name"], model, 429, msg)
             return None, 429, msg
 
+        conn.execute(
+            "INSERT INTO reservations (burner_key_id, amount_usd, created_at) VALUES (?, ?, ?)",
+            (row["id"], estimate, now_ts),
+        )
         return int(row["id"]), None, None
 
 
@@ -319,6 +363,20 @@ def get_upstream_target(key_id: int) -> dict[str, str]:
     }
 
 
+def _release_oldest_reservation(conn: sqlite3.Connection, key_id: int) -> None:
+    conn.execute(
+        "DELETE FROM reservations WHERE id = "
+        "(SELECT id FROM reservations WHERE burner_key_id = ? ORDER BY id LIMIT 1)",
+        (key_id,),
+    )
+
+
+def release_reservation(key_id: int) -> None:
+    """Free one pending reservation. Call it when an approved request fails upstream."""
+    with get_db() as conn:
+        _release_oldest_reservation(conn, key_id)
+
+
 def add_spend(key_id: int, model: str, input_tokens: int, output_tokens: int) -> float:
     """Record token usage and USD spend for an approved request."""
     cost_usd = calculate_cost(model, input_tokens, output_tokens)
@@ -336,6 +394,7 @@ def add_spend(key_id: int, model: str, input_tokens: int, output_tokens: int) ->
             """,
             (cost_usd, key_id),
         )
+        _release_oldest_reservation(conn, key_id)
         _log_request(
             conn=conn,
             burner_key_id=key_id,
@@ -378,7 +437,7 @@ class CreateKeyRequest(BaseModel):
     budget_limit_usd: float = Field(default=0.05, gt=0)
     ttl_minutes: int = Field(default=60, ge=1, le=43200)
     allowed_models: list[str] = Field(
-        default_factory=lambda: ["claude-3-5-haiku-20241022"], min_length=1
+        default_factory=lambda: ["claude-haiku-5-5"], min_length=1
     )
 
 
