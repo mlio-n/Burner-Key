@@ -3,7 +3,7 @@
  * Owner: Utku
  */
 
-import { API_BASE, fetchHealth, fetchModels, sendMessage } from "./api.js";
+import { API_BASE, fetchModels, sendMessage } from "./api.js";
 
 function escapeHtml(str) {
   return String(str ?? "")
@@ -51,24 +51,13 @@ function setupViewToggle() {
   });
 }
 
-async function updateHealthBadge() {
-  const badge = document.getElementById("upstreamBadge");
-  if (!badge) return;
-  try {
-    const health = await fetchHealth();
-    badge.textContent = `Upstream: ${health.upstream_base_url}`;
-    badge.className =
-      "rounded-full border border-emerald-500/40 bg-emerald-500/15 px-3 py-1 font-mono text-[11px] text-emerald-300";
-  } catch {
-    badge.textContent = "Backend Çevrimdışı";
-    badge.className =
-      "rounded-full border border-rose-500/40 bg-rose-500/15 px-3 py-1 font-mono text-[11px] text-rose-300";
-  }
+// "claude-3-5-haiku-20241022" -> "claude-3-5-haiku" (only for display; the API still needs the full id)
+function modelLabel(model) {
+  return String(model).replace(/-\d{8}$/, "");
 }
 
 export async function initSimulator() {
   setupViewToggle();
-  updateHealthBadge();
 
   const root = document.getElementById("simulator-root");
   if (!root) return;
@@ -109,7 +98,7 @@ export async function initSimulator() {
             id="simModel"
             class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-slate-100 focus:border-sky-500 focus:outline-none"
           >
-            <option value="claude-3-5-haiku-20241022">claude-3-5-haiku-20241022</option>
+            <option value="claude-3-5-haiku-20241022">claude-3-5-haiku</option>
           </select>
         </div>
       </div>
@@ -178,7 +167,7 @@ export async function initSimulator() {
     const models = await fetchModels();
     const select = document.getElementById("simModel");
     select.innerHTML = models
-      .map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`)
+      .map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(modelLabel(m))}</option>`)
       .join("");
   } catch {
     // Keep fallback option
@@ -226,7 +215,7 @@ export async function initSimulator() {
               <span class="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-semibold text-slate-300">
                 ${escapeHtml(ev.tag)}
               </span>
-              <span class="font-mono text-[11px] text-slate-400">${escapeHtml(ev.model)}</span>
+              <span class="font-mono text-[11px] text-slate-400">${escapeHtml(modelLabel(ev.model))}</span>
             </div>
             <span class="font-mono text-[11px] text-slate-500">
               ${ev.tokens ? `${ev.tokens} tok • ` : ""}${ev.time}
