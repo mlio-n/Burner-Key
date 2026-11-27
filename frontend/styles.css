@@ -61,7 +61,6 @@
 :root[data-theme="dark"] .code:not(.err),
 :root[data-theme="dark"] .st:not(.st-dead):not(.st-burned):not(.st-quota),
 :root[data-theme="dark"] .scen button b,
-:root[data-theme="dark"] .tiny,
 :root[data-theme="dark"] .mini:not(:disabled),
 :root[data-theme="dark"] .burn:not(:disabled):not(.confirm) {
   border-color: #5a5a5a;
@@ -588,11 +587,6 @@ body[data-view="dashboard"] .dash {
   overflow-wrap: anywhere;
 }
 
-#modelsContainer .opt {
-  padding: 5px 5px;
-  font-size: 10.5px;
-  letter-spacing: -0.01em;
-}
 
 .opt .end {
   margin-left: auto;
@@ -883,7 +877,6 @@ body[data-view="dashboard"] .dash {
 }
 
 tr.is-dead .k-name,
-tr.is-dead .tags,
 tr.is-dead .num {
   color: var(--mute);
 }
@@ -892,10 +885,6 @@ tr.is-dead .k-name-text {
   text-decoration: line-through;
 }
 
-.tags {
-  font-family: var(--mono);
-  font-size: 10.5px;
-}
 
 /* Quota meter: 20 discrete cells, like a hardware level meter */
 
@@ -1383,36 +1372,10 @@ body[data-view="simulator"] .sim-controls .scen button:first-child {
   }
 }
 
-/* ---------- Model select-all ---------- */
 
-.label-end {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
 
-.tiny {
-  height: 18px;
-  padding: 0 5px;
-  border: 1px solid var(--line);
-  background: var(--field);
-  font-family: var(--mono);
-  font-size: 9.5px;
-  font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--fg);
-}
 
-.tiny:hover:not(:disabled) {
-  background: var(--fill);
-  color: var(--on-fill);
-}
 
-.tiny:disabled {
-  color: var(--disabled);
-  cursor: not-allowed;
-}
 
 /* ---------- Vault: MOCK TEST | GERÇEK KEY ---------- */
 
@@ -1564,4 +1527,14 @@ body.is-resizing * {
   .topbar .theme {
     border-left: 0;
   }
+}
+
+/* Simulator console: neutral system note (e.g. 401 demo burning its throwaway key) */
+.term .code.info {
+  border-color: var(--term-mute);
+  color: var(--term-mute);
+}
+
+.ev.info p {
+  color: var(--term-mute);
 }

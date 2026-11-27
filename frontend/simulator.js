@@ -3,7 +3,7 @@
  * Owner: Utku
  */
 
-import { fetchModels, sendMessage } from "./api.js";
+import { createKey, fetchModels, revokeKey, sendMessage } from "./api.js";
 
 const VIEW_STORAGE_KEY = "burner:view";
 const LOOP_LABEL = "Sonsuz döngü";
@@ -100,7 +100,7 @@ export async function initSimulator() {
       </form>
 
       <div class="scen">
-        <button id="forbiddenModelBtn" type="button"><i aria-hidden="true">▶</i><b>403</b><span>Yasaklı model · Opus</span></button>
+        <button id="burnedKeyBtn" type="button" title="Geçici bir anahtar üretir, yakar ve onunla istek atar. Mevcut anahtarınız etkilenmez."><i aria-hidden="true">▶</i><b>401</b><span id="burnedKeyLabel">Yanmış anahtar</span></button>
         <button id="loopBugBtn" type="button"><i aria-hidden="true">▶</i><b>429</b><span id="loopBtnLabel">${LOOP_LABEL}</span></button>
       </div>
       </div>
@@ -154,19 +154,23 @@ export async function initSimulator() {
     }
 
     consoleEl.innerHTML = events
-      .map(
-        (ev) => `
-        <div class="ev ${ev.ok ? "" : "err"}">
+      .map((ev) => {
+        // info rows are neutral system notes (e.g. the 401 demo burning its key), not responses
+        const cls = ev.info ? "info" : ev.ok ? "" : "err";
+        const code = ev.info ? "SYS" : ev.status || "ERR";
+        const tag = ev.info || ev.ok ? ev.tag : `${ev.tag} · ${ev.errType}`;
+        return `
+        <div class="ev ${cls}">
           <div class="ev-meta">
-            <span class="code ${ev.ok ? "" : "err"}">${ev.status || "ERR"}</span>
-            <span class="tag">${escapeHtml(ev.ok ? ev.tag : `${ev.tag} · ${ev.errType}`)}</span>
+            <span class="code ${cls}">${code}</span>
+            <span class="tag">${escapeHtml(tag)}</span>
             <span class="muted">${escapeHtml(modelLabel(ev.model))}</span>
             <span class="end">${ev.tokens ? `${ev.tokens} TOK · ` : ""}${ev.time}</span>
           </div>
           <p>${escapeHtml(ev.text)}</p>
         </div>
-      `
-      )
+      `;
+      })
       .join("");
   }
 
@@ -181,8 +185,8 @@ export async function initSimulator() {
     renderConsole();
   }
 
-  async function runProxyCall(targetModel, targetPrompt, tag) {
-    const key = keyInput.value.trim();
+  async function runProxyCall(targetModel, targetPrompt, tag, overrideKey = null) {
+    const key = (overrideKey ?? keyInput.value).trim();
     if (!key) {
       pushEvent({
         ok: false,
@@ -253,9 +257,44 @@ export async function initSimulator() {
     await runProxyCall(modelSelect.value, prompt, "SOHBET");
   });
 
-  document.getElementById("forbiddenModelBtn").addEventListener("click", async () => {
-    if (loopTimer) return;
-    await runProxyCall("claude-3-opus-20240229", "İzinsiz pahalı model isteği gönderiliyor.", "YASAKLI MODEL");
+  // 401 demo: mint a throwaway key, burn it (kill switch), then call the proxy with it.
+  // Uses its own key so the one in the x-api-key field keeps working.
+  const burnedBtn = document.getElementById("burnedKeyBtn");
+  const burnedLabel = document.getElementById("burnedKeyLabel");
+  burnedBtn.addEventListener("click", async () => {
+    if (loopTimer || burnedBtn.disabled) return;
+    burnedBtn.disabled = true;
+    burnedLabel.textContent = "Yakılıyor…";
+    try {
+      const demo = await createKey({
+        name: "401 Demo · yanmış anahtar",
+        budget_limit_usd: 0.005,
+        ttl_minutes: 15,
+        allowed_models: ["*"],
+        master_key_id: null,
+      });
+      await revokeKey(demo.id);
+      pushEvent({
+        info: true,
+        tag: "KILL SWITCH",
+        model: modelSelect.value,
+        text: `Geçici anahtar #${String(demo.id).padStart(3, "0")} (${demo.key_preview}) üretildi ve yakıldı. Şimdi bu anahtarla istek atılıyor…`,
+      });
+      window.dispatchEvent(new CustomEvent("burner:activity"));
+      await runProxyCall(modelSelect.value, "Yakılmış anahtarla istek deneniyor.", "YANMIŞ ANAHTAR", demo.api_key);
+    } catch (err) {
+      pushEvent({
+        ok: false,
+        status: 0,
+        errType: "DEMO",
+        tag: "YANMIŞ ANAHTAR",
+        model: modelSelect.value,
+        text: err.message || "Demo anahtar hazırlanamadı.",
+      });
+    } finally {
+      burnedBtn.disabled = false;
+      burnedLabel.textContent = "Yanmış anahtar";
+    }
   });
 
   loopBtn.addEventListener("click", () => {

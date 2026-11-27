@@ -10,7 +10,6 @@ import {
   fetchKeys,
   fetchLogs,
   fetchMasterKeys,
-  fetchModels,
   fetchProviders,
   revokeKey,
 } from "./api.js";
@@ -20,6 +19,9 @@ const EYE_OFF_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidde
 
 // Providers offered in "GERÇEK KEY" mode (mock has its own tab; custom needs a base URL).
 const LIVE_EXCLUDED = new Set(["mock", "custom"]);
+
+// Every burner key may call any model; the backend treats "*" as a wildcard in check_key().
+const ALL_MODELS = ["*"];
 
 const TTL_OPTIONS = [
   ["15M", 15],
@@ -67,7 +69,6 @@ const state = {
   liveVault: "new", // "new" = key typed into the form, otherwise a saved master key id
   vaults: [],
   providers: [],
-  allModels: [],
 };
 
 const rowSigs = new Map();
@@ -244,18 +245,6 @@ function renderShell(root) {
             </div>
           </div>
 
-          <div class="field">
-            <div class="label">
-              <span>İzinli Modeller</span>
-              <span class="label-end">
-                <b id="modelCount">0 seçili</b>
-                <button id="modelToggle" type="button" class="tiny">Hepsini seç</button>
-              </span>
-            </div>
-            <div id="modelsContainer" class="opts">
-              <div class="opt"><span class="txt muted">Yükleniyor…</span></div>
-            </div>
-          </div>
 
           <p id="formError" class="form-error" hidden></p>
 
@@ -451,7 +440,6 @@ function rowHtml(k) {
   if (spent > 0 && on === 0) on = 1;
   const cells = Array.from({ length: METER_CELLS }, (_, i) => `<i class="${i < on ? "on" : ""}"></i>`).join("");
   const provider = k.provider ? ` · ${escapeHtml(String(k.provider).toUpperCase())}` : "";
-  const models = (k.allowed_models || []).map(modelLabel).join(" · ");
   const expiryTitle = formatExpiryTooltip(k.expires_at);
 
   return `
@@ -461,7 +449,6 @@ function rowHtml(k) {
         "0"
       )}</span><span class="k-name-text">${escapeHtml(k.name)}</span></div>
       <div class="sub">${escapeHtml(k.key_preview)}${provider}</div>
-      <div class="sub tags" title="${escapeHtml(models)}">${escapeHtml(models)}</div>
     </td>
     <td class="nowrap">
       <div class="meter ${pct >= 80 ? "hot" : ""}" title="%${pct.toFixed(1)}">${cells}</div>
@@ -643,88 +630,13 @@ export async function initDashboard() {
     el.addEventListener("change", syncCustomControls);
   });
 
-  /* ----- Models + select-all toggle ----- */
-
-  function modelInputs() {
-    return Array.from(document.querySelectorAll('input[name="allowed_model"]'));
-  }
-
-  function updateModelCount() {
-    const inputs = modelInputs();
-    const n = inputs.filter((el) => el.checked).length;
-    document.getElementById("modelCount").textContent = `${n} seçili`;
-    const toggle = document.getElementById("modelToggle");
-    const allOn = inputs.length > 0 && n === inputs.length;
-    toggle.textContent = allOn ? "Hepsini kaldır" : "Hepsini seç";
-    toggle.disabled = inputs.length === 0;
-  }
-
-  function renderModels(models) {
-    const container = document.getElementById("modelsContainer");
-    const previously = new Set(modelInputs().filter((el) => el.checked).map((el) => el.value));
-    if (!models.length) {
-      container.innerHTML = `<div class="opt"><span class="txt muted">Model yok</span></div>`;
-      updateModelCount();
-      return;
-    }
-    let keep = models.filter((m) => previously.has(m));
-    if (!keep.length) keep = [models[0]];
-    const checked = new Set(keep);
-    container.innerHTML = models
-      .map(
-        (m) => `
-        <label class="opt" title="${escapeHtml(m)}">
-          <input type="checkbox" name="allowed_model" value="${escapeHtml(m)}" ${checked.has(m) ? "checked" : ""} />
-          <span class="box" aria-hidden="true"></span>
-          <span class="txt">${escapeHtml(modelLabel(m))}</span>
-        </label>`
-      )
-      .join("");
-    updateModelCount();
-  }
-
-  async function loadModels() {
-    try {
-      state.allModels = await fetchModels();
-    } catch {
-      state.allModels = [];
-      document.getElementById("modelsContainer").innerHTML =
-        `<div class="opt"><span class="txt muted">Model listesi yüklenemedi</span></div>`;
-      updateModelCount();
-      return;
-    }
-    renderModelsForVault();
-  }
-
-  document.getElementById("modelToggle").addEventListener("click", () => {
-    const inputs = modelInputs();
-    const allOn = inputs.every((el) => el.checked);
-    inputs.forEach((el) => (el.checked = !allOn));
-    updateModelCount();
-  });
-
   /* ----- Vault: MOCK TEST | GERÇEK KEY ----- */
 
   const isMockVault = (v) => v.provider === "mock" || v.protocol === "mock";
 
-  function liveProviderId() {
-    if (state.liveVault === "new") return document.getElementById("liveProvider").value;
-    const saved = state.vaults.find((v) => String(v.id) === String(state.liveVault));
-    return saved ? saved.provider : "";
-  }
-
   function liveReady() {
     if (state.liveVault !== "new") return true;
     return document.getElementById("liveKey").value.trim().length > 0;
-  }
-
-  function renderModelsForVault() {
-    if (state.vaultMode === "live") {
-      const provider = state.providers.find((p) => p.id === liveProviderId());
-      renderModels(provider ? provider.models : state.allModels);
-    } else {
-      renderModels(state.allModels);
-    }
   }
 
   function syncVaultUi() {
@@ -830,20 +742,15 @@ export async function initDashboard() {
   bindSeg("vaultTabs", (v) => {
     state.vaultMode = v;
     syncVaultUi();
-    renderModelsForVault();
   });
 
   document.getElementById("liveSaved").addEventListener("change", (e) => {
     if (e.target.name !== "liveVault") return;
     state.liveVault = e.target.value;
     syncVaultUi();
-    renderModelsForVault();
   });
 
-  document.getElementById("liveProvider").addEventListener("change", () => {
-    syncVaultUi();
-    renderModelsForVault();
-  });
+  document.getElementById("liveProvider").addEventListener("change", syncVaultUi);
 
   document.getElementById("liveKey").addEventListener("input", syncVaultUi);
 
@@ -880,7 +787,6 @@ export async function initDashboard() {
     input.type = "password";
     state.liveVault = String(master.id);
     await loadVaults();
-    renderModelsForVault();
     return master.id;
   }
 
@@ -894,8 +800,6 @@ export async function initDashboard() {
       console.error("Dashboard refresh error:", err);
     }
   }
-
-  document.getElementById("modelsContainer").addEventListener("change", updateModelCount);
 
   document.getElementById("createKeyForm").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -913,15 +817,6 @@ export async function initDashboard() {
       return;
     }
 
-    const checkedModels = Array.from(document.querySelectorAll('input[name="allowed_model"]:checked')).map(
-      (el) => el.value
-    );
-    if (!checkedModels.length) {
-      errEl.textContent = "EN AZ BİR MODEL SEÇİN";
-      errEl.hidden = false;
-      return;
-    }
-
     state.submitting = true;
     syncCustomControls();
     try {
@@ -930,7 +825,7 @@ export async function initDashboard() {
         name: document.getElementById("keyName").value.trim() || "Burner Key",
         budget_limit_usd: budgetInfo.budget,
         ttl_minutes: ttlInfo.minutes,
-        allowed_models: checkedModels,
+        allowed_models: ALL_MODELS,
         master_key_id: masterKeyId,
       });
 
@@ -1025,7 +920,6 @@ export async function initDashboard() {
   window.addEventListener("burner:activity", refresh);
 
   await Promise.all([loadProviders(), loadVaults()]);
-  await loadModels();
   await refresh();
   setInterval(refresh, 2000);
   setInterval(() => tickCountdowns(false), 1000);

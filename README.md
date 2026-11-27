@@ -215,10 +215,10 @@ git push origin main
 
 ## 🎬 Jüri / Canlı Demo Akışı (2 Dakikalık Senaryo)
 
-Sunumda **"Bölünmüş Ekran"** modunu açık tutun (Sol: Kontrol Paneli, Sağ: 3. Parti AI Uygulaması):
+Sunumda üst bardaki **"Tümü"** görünümünü açık tutun (Sol: Kontrol Paneli, Sağ: 3. Parti AI Uygulaması / Simülatör):
 
-1. **Anahtar Üret:** Solda bütçesi `$0.005`, izinli modeli yalnızca `claude-3-5-haiku-20241022` olan bir Burner Key oluşturun. Anahtar otomatik sağ tarafa geçer.
-2. **Normal Kullanım (`200 OK`):** Sağdan bir soru sorun. Yanıt gelir, soldaki harcama çubuğu ve canlı loglar anında güncellenir.
-3. **Model Kısıtlaması (`403`):** Sağdaki **"Yasaklı Model Dene"** butonuna basın. Proxy pahalı modele geçişi anında engeller.
-4. **Sonsuz Döngü Koruması (`429`):** **"Sonsuz Döngü Bug'ı Tetikle"** butonuna basın. Uygulama art arda istek atmaya başlar; bütçe `$0.005`'e ulaştığı milisaniyede proxy trafiği keser (`429`).
-5. **Kill Switch (`401`):** Yeni aktif bir anahtarla normal sohbet atarken soldan kırmızı **"İptal Et"** butonuna basın. Sonraki ilk istek anında `401` ile durdurulur.
+1. **Anahtar Üret:** Solda kotası `$0.005` olan bir Burner Key oluşturun (anahtarlar tüm modellere izinlidir). Anahtar otomatik olarak sağdaki simülatöre geçer.
+2. **Normal Kullanım (`200 OK`):** Sağdan bir soru sorun. Yanıt gelir, harcama göstergesi ve canlı loglar anında güncellenir.
+3. **Yanmış Anahtar (`401`):** Simülatördeki **"401 Yanmış anahtar"** butonuna basın. Geçici bir demo anahtar üretilir, anında yakılır ve onunla istek atılır; proxy isteği `401` ile reddeder (konsolda ve canlı logda görünür). Mevcut anahtarınız etkilenmez.
+4. **Sonsuz Döngü Koruması (`429`):** **"429 Sonsuz döngü"** butonuna basın. Uygulama art arda istek atmaya başlar; bütçe `$0.005`'e ulaştığı anda proxy trafiği keser (`429`).
+5. **Kill Switch (`401`):** Yeni aktif bir anahtarla sohbet ederken soldaki **BURN** butonuna basın ve **CONFIRM BURN?** ile onaylayın. Sonraki ilk istek anında `401` ile durdurulur.
