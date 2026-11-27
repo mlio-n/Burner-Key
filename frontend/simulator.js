@@ -16,9 +16,12 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;");
 }
 
-// "claude-3-5-haiku-20241022" -> "claude-3-5-haiku" (only for display; the API still needs the full id)
+// "claude-3-5-haiku-20241022" -> "claude-3-5-haiku", "llama-3.3-70b-versatile" -> "llama-3.3-70b"
+// (only for display; the API still needs the full id)
 function modelLabel(model) {
-  return String(model).replace(/-\d{8}$/, "");
+  return String(model)
+    .replace(/-\d{8}$/, "")
+    .replace(/-(versatile|latest|instruct|preview)$/, "");
 }
 
 function setupViewToggle() {
@@ -95,8 +98,8 @@ export async function initSimulator() {
       </form>
 
       <div class="scen">
-        <button id="forbiddenModelBtn" type="button"><b>403</b><span>Yasaklı model · Opus</span></button>
-        <button id="loopBugBtn" type="button"><b>429</b><span id="loopBtnLabel">${LOOP_LABEL}</span></button>
+        <button id="forbiddenModelBtn" type="button"><i aria-hidden="true">▶</i><b>403</b><span>Yasaklı model · Opus</span></button>
+        <button id="loopBugBtn" type="button"><i aria-hidden="true">▶</i><b>429</b><span id="loopBtnLabel">${LOOP_LABEL}</span></button>
       </div>
 
       <header class="panel-head">
@@ -131,6 +134,10 @@ export async function initSimulator() {
   window.addEventListener("burner:select-key", (e) => {
     if (e.detail?.apiKey) {
       keyInput.value = e.detail.apiKey;
+      // Restart the flash so repeated TEST → clicks are visible too.
+      keyInput.classList.remove("flash");
+      void keyInput.offsetWidth;
+      keyInput.classList.add("flash");
     }
   });
 
@@ -228,6 +235,7 @@ export async function initSimulator() {
     }
     loopLabel.textContent = LOOP_LABEL;
     loopBtn.classList.remove("is-running");
+    loopBtn.querySelector("i").textContent = "▶";
   }
 
   renderConsole();
@@ -253,6 +261,7 @@ export async function initSimulator() {
     loopCount = 0;
     let inFlight = false;
     loopBtn.classList.add("is-running");
+    loopBtn.querySelector("i").textContent = "■";
 
     loopTimer = setInterval(async () => {
       if (inFlight) return;

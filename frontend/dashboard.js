@@ -38,6 +38,8 @@ const state = {
   burnTimer: null,
   burningId: null,
   logsSig: "",
+  // Raw keys are only returned once by POST /admin/keys, so TEST → works for keys made in this tab.
+  rawKeys: new Map(),
 };
 
 const rowSigs = new Map();
@@ -50,9 +52,16 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;");
 }
 
-// "claude-3-5-haiku-20241022" -> "claude-3-5-haiku" (display only)
+// "claude-3-5-haiku-20241022" -> "claude-3-5-haiku", "llama-3.3-70b-versatile" -> "llama-3.3-70b"
+// (display only; the full id is what gets sent to the API)
 function modelLabel(model) {
-  return String(model).replace(/-\d{8}$/, "");
+  return String(model)
+    .replace(/-\d{8}$/, "")
+    .replace(/-(versatile|latest|instruct|preview)$/, "");
+}
+
+function selectKeyInSimulator(apiKey) {
+  window.dispatchEvent(new CustomEvent("burner:select-key", { detail: { apiKey } }));
 }
 
 function formatTime(iso) {
@@ -178,7 +187,7 @@ function renderShell(root) {
             <span class="muted">GET /admin/logs · 2s</span>
           </header>
           <div class="panel-body">
-            <table class="tbl">
+            <table class="tbl log-tbl">
               <thead>
                 <tr>
                   <th>Saat</th>
@@ -248,6 +257,14 @@ function burnButton(k) {
   )} anahtarını yak"><span>BURN</span></button>`;
 }
 
+function testButton(k) {
+  if (k.status !== "active") return "";
+  if (!state.rawKeys.has(k.id)) {
+    return `<button class="mini" type="button" disabled title="Ham anahtar yalnızca üretildiği anda gösterilir; bu anahtar bu sekmede üretilmedi.">TEST →</button>`;
+  }
+  return `<button class="mini" type="button" data-test-id="${k.id}" title="Anahtarı simülatöre aktar">TEST →</button>`;
+}
+
 function rowHtml(k) {
   const budget = Math.max(Number(k.budget_limit_usd) || 0, 0.000001);
   const spent = Number(k.spent_usd) || 0;
@@ -271,7 +288,7 @@ function rowHtml(k) {
     </td>
     <td class="r mono num">${Number(k.request_count) || 0}</td>
     <td class="nowrap">${statusCell(k)}</td>
-    <td class="r">${burnButton(k)}</td>
+    <td class="r nowrap"><div class="row-actions">${testButton(k)}${burnButton(k)}</div></td>
   `;
 }
 
@@ -295,7 +312,9 @@ function renderKeys() {
   if (!list.length) {
     rowSigs.clear();
     tbody.innerHTML = `<tr class="empty"><td colspan="6">${
-      state.keys.length ? "AKTİF ANAHTAR YOK · TÜMÜ SEKMESİNE BAKIN" : "HENÜZ ANAHTAR YOK · SOLDAN ÜRETİN"
+      state.keys.length
+        ? `AKTİF ANAHTAR YOK · <button type="button" class="link-btn" data-goto-all>TÜMÜ SEKMESİNE BAKIN</button>`
+        : "HENÜZ ANAHTAR YOK · SOLDAN ÜRETİN"
     }</td></tr>`;
     return;
   }
@@ -368,7 +387,9 @@ function renderLogs(logs) {
           <td><span class="code ${ok ? "" : "err"}">${escapeHtml(log.status_code)}</span></td>
           <td class="r mono nowrap">${Number(log.input_tokens) || 0}/${Number(log.output_tokens) || 0}</td>
           <td class="r mono nowrap">$${Number(log.cost_usd || 0).toFixed(5)}</td>
-          <td class="${ok ? "muted" : ""}">${escapeHtml(log.error_message || "OK")}</td>
+          <td class="trunc ${ok ? "muted" : ""}" title="${escapeHtml(log.error_message || "OK")}">${escapeHtml(
+            log.error_message || "OK"
+          )}</td>
         </tr>
       `;
     })
@@ -487,9 +508,10 @@ export async function initDashboard() {
       });
 
       latestCreatedKey = created.api_key;
+      state.rawKeys.set(created.id, created.api_key);
       document.getElementById("newKeyValue").textContent = latestCreatedKey;
       document.getElementById("newKeyBanner").hidden = false;
-      window.dispatchEvent(new CustomEvent("burner:select-key", { detail: { apiKey: latestCreatedKey } }));
+      selectKeyInSimulator(latestCreatedKey);
       await refresh();
     } catch (err) {
       errEl.textContent = (err.message || "Anahtar oluşturulamadı").toUpperCase();
@@ -513,7 +535,7 @@ export async function initDashboard() {
 
   document.getElementById("sendToSimBtn").addEventListener("click", () => {
     if (!latestCreatedKey) return;
-    window.dispatchEvent(new CustomEvent("burner:select-key", { detail: { apiKey: latestCreatedKey } }));
+    selectKeyInSimulator(latestCreatedKey);
   });
 
   document.getElementById("closeBannerBtn").addEventListener("click", () => {
@@ -522,6 +544,20 @@ export async function initDashboard() {
 
   // BURN: first click arms (CONFIRM BURN?), second click within 3s revokes.
   document.getElementById("keysTableBody").addEventListener("click", async (e) => {
+    if (e.target.closest("button[data-goto-all]")) {
+      const allBtn = document.querySelector('#keyFilter button[data-val="all"]');
+      allBtn.click();
+      allBtn.focus();
+      return;
+    }
+
+    const testBtn = e.target.closest("button[data-test-id]");
+    if (testBtn) {
+      const raw = state.rawKeys.get(Number(testBtn.dataset.testId));
+      if (raw) selectKeyInSimulator(raw);
+      return;
+    }
+
     const btn = e.target.closest("button[data-burn-id]");
     if (!btn || btn.disabled) return;
     const id = Number(btn.dataset.burnId);

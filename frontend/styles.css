@@ -404,10 +404,16 @@ body[data-view="simulator"] #workspace {
   border-radius: 50%;
 }
 
+/* Never ellipsize: labels are shortened in JS, and anything still too long wraps. */
 .opt .txt {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+#modelsContainer .opt {
+  padding: 5px 5px;
+  font-size: 10.5px;
+  letter-spacing: -0.01em;
 }
 
 .opt .end {
@@ -542,7 +548,7 @@ body[data-view="simulator"] #workspace {
   position: sticky;
   top: 0;
   z-index: 1;
-  padding: 5px 8px;
+  padding: 5px 6px;
   background: var(--panel);
   border-bottom: 1px solid var(--ink);
   font-family: var(--mono);
@@ -556,7 +562,7 @@ body[data-view="simulator"] #workspace {
 }
 
 .tbl td {
-  padding: 6px 8px;
+  padding: 6px 6px;
   border-bottom: 1px solid var(--faint);
   vertical-align: middle;
 }
@@ -567,6 +573,80 @@ body[data-view="simulator"] #workspace {
 
 .tbl .nowrap {
   white-space: nowrap;
+}
+
+/* Takes the remaining width and ellipsizes; full text is in the title attribute. */
+.tbl td.trunc {
+  width: 100%;
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-tbl td {
+  height: 29px;
+  white-space: nowrap;
+}
+
+.link-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.link-btn:hover {
+  color: var(--red);
+}
+
+.row-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.mini {
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--ink);
+  background: var(--panel);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.mini:hover:not(:disabled) {
+  background: var(--ink);
+  color: var(--panel);
+}
+
+.mini:disabled {
+  border-color: var(--faint);
+  color: #b3b3ac;
+  cursor: not-allowed;
+}
+
+.input.flash {
+  animation: key-flash 0.9s steps(1) 1;
+}
+
+@keyframes key-flash {
+  0%,
+  50% {
+    background: var(--ink);
+    color: var(--panel);
+  }
+  25%,
+  75% {
+    background: var(--red);
+    color: var(--panel);
+  }
 }
 
 .tbl tr:hover td {
@@ -616,7 +696,7 @@ tr.is-dead .k-name-text {
   display: grid;
   grid-template-columns: repeat(20, 1fr);
   gap: 1px;
-  width: 120px;
+  width: 100px;
   height: 8px;
   margin-bottom: 3px;
 }
@@ -703,7 +783,7 @@ tr.is-dead .k-name-text {
 /* ---------- BURN ---------- */
 
 .burn {
-  min-width: 124px;
+  min-width: 112px;
   white-space: nowrap;
   height: 26px;
   padding: 0 8px;
@@ -793,14 +873,15 @@ tr.is-dead .k-name-text {
 .scen button {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
+  gap: 6px;
+  padding: 8px;
   border: 0;
   border-left: 1px solid var(--ink);
-  background: var(--panel);
+  background: var(--paper);
   font-family: var(--mono);
   font-size: 11px;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
+  white-space: nowrap;
   text-align: left;
   text-transform: uppercase;
 }
@@ -815,8 +896,18 @@ tr.is-dead .k-name-text {
   font-variant-numeric: tabular-nums;
 }
 
+.scen button i {
+  font-style: normal;
+  font-size: 9px;
+}
+
 .scen button:hover {
-  background: var(--paper);
+  background: var(--red);
+  color: var(--panel);
+}
+
+.scen button:hover b {
+  border-color: var(--panel);
 }
 
 .scen button.is-running {
