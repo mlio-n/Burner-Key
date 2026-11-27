@@ -114,5 +114,5 @@ async def mock_openai_chat_completions(request: Request) -> JSONResponse:
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.getenv("FAKE_CLAUDE_PORT", "8001"))
-    uvicorn.run("fake_claude:app", host="127.0.0.1", port=port, reload=True)
+    port = int(os.getenv("MOCK_UPSTREAM_PORT") or os.getenv("FAKE_CLAUDE_PORT", "8001"))
+    uvicorn.run("mock_upstream:app", host="127.0.0.1", port=port, reload=True)

@@ -74,7 +74,7 @@ Burner-Key/
 ├── backend/                  # Backend Ekibi: Muzaffer & Selçuk
 │   ├── main.py               # [Muzaffer] FastAPI giriş noktası, CORS, frontend yayını, /health
 │   ├── proxy.py              # [Muzaffer] Çift protokollü evrensel proxy (/v1/messages & /v1/chat/completions)
-│   ├── fake_claude.py        # [Muzaffer] Ücretsiz çift protokollü Mock AI sunucusu (:8001)
+│   ├── mock_upstream.py      # [Muzaffer] Ücretsiz çift protokollü Mock AI sunucusu (:8001)
 │   ├── keys.py               # [Selçuk]   SQLite DB, Fernet kasa, check_key/get_upstream_target/add_spend, /admin/*
 │   ├── pricing.py            # [Selçuk]   Çoklu sağlayıcı kataloğu, anahtar algılama, token fiyatlandırması
 │   ├── requirements.txt      # [Ortak]    Python paket bağımlılıkları
@@ -94,7 +94,7 @@ Burner-Key/
 
 | Ekip Üyesi | Taraf | Dosyalar | Odaklanacağı İşler |
 | :--- | :--- | :--- | :--- |
-| **Muzaffer** | Backend | `backend/main.py`<br>`backend/proxy.py`<br>`backend/fake_claude.py` | Çift protokollü proxy yönlendirmesi, çapraz çeviri, hata/timeout yönetimi |
+| **Muzaffer** | Backend | `backend/main.py`<br>`backend/proxy.py`<br>`backend/mock_upstream.py` | Çift protokollü proxy yönlendirmesi, çapraz çeviri, hata/timeout yönetimi |
 | **Selçuk** | Backend | `backend/keys.py`<br>`backend/pricing.py` | Fernet Master Key kasası, SQLite kuralları, `/admin/*` API'leri, çoklu model fiyatları |
 | **Kerim** | Frontend | `frontend/dashboard.js`<br>`frontend/styles.css` | Kontrol paneli arayüzü, harcama yüzdesi renkleri (`%80+` uyarısı), Kill Switch ve log tablosu |
 | **Utku** | Frontend | `frontend/simulator.js`<br>`frontend/index.html` | Yan ekrandaki 3. parti uygulama simülatörü, tek tıkla ihlal senaryoları, görünüm geçişleri |
@@ -133,7 +133,7 @@ cp .env.example .env
 **2. Sunucuları Başlatın (2 Ayrı Terminal, `backend/` içinden):**
 ```powershell
 # Terminal 1 — Mock AI Sunucusu (:8001):
-.\.venv\Scripts\python.exe fake_claude.py
+.\.venv\Scripts\python.exe mock_upstream.py
 
 # Terminal 2 — Burner Key Proxy & Arayüz (:8000):
 .\.venv\Scripts\python.exe main.py

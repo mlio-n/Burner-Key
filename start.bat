@@ -43,7 +43,7 @@ if not exist ".env" (
 )
 
 echo [BASLATILIYOR] Mock AI sunucusu (http://127.0.0.1:8001)...
-start "Burner Key - Mock AI (:8001)" /D "%BACKEND_DIR%" cmd /k ".venv\Scripts\python.exe fake_claude.py"
+start "Burner Key - Mock AI (:8001)" /D "%BACKEND_DIR%" cmd /k ".venv\Scripts\python.exe mock_upstream.py"
 
 echo [BASLATILIYOR] Burner Key Proxy ^& Arayuz (http://127.0.0.1:8000)...
 start "Burner Key - Proxy & UI (:8000)" /D "%BACKEND_DIR%" cmd /k ".venv\Scripts\python.exe main.py"

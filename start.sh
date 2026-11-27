@@ -97,7 +97,7 @@ check_health() {
 }
 
 echo "[BASLATILIYOR] Mock AI sunucusu (http://127.0.0.1:8001)..."
-".venv/bin/python" fake_claude.py &
+".venv/bin/python" mock_upstream.py &
 FAKE_PID=$!
 
 echo "[BASLATILIYOR] Burner Key Proxy & Arayuz (http://127.0.0.1:8000)..."
