@@ -145,6 +145,18 @@ code {
   color: var(--ink);
 }
 
+.topbar .views .seg button {
+  padding: 5px 12px;
+}
+
+.topbar .views .seg button[aria-pressed="false"] {
+  color: #9a9a93;
+}
+
+.topbar .views .seg button[aria-pressed="false"]:hover {
+  color: var(--ink);
+}
+
 /* ---------- Segmented controls ---------- */
 
 .seg {
@@ -198,7 +210,8 @@ code {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(320px, 27vw, 420px);
+  /* Admin side (generator + keys/log) ≈ 58%, simulator ≈ 42% */
+  grid-template-columns: minmax(0, 58fr) minmax(0, 42fr);
   gap: var(--gap);
   padding: var(--gap);
 }
@@ -231,20 +244,25 @@ body[data-view="simulator"] #dashboard-col {
 }
 
 body[data-view="simulator"] #workspace {
-  grid-template-columns: minmax(0, 760px);
-  justify-content: center;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .dash {
   display: grid;
-  grid-template-columns: clamp(270px, 21vw, 320px) minmax(0, 1fr);
+  /* generator ≈ 23%, keys + log ≈ 35% of the full width */
+  grid-template-columns: minmax(0, 23fr) minmax(0, 35fr);
   gap: var(--gap);
   min-height: 0;
 }
 
+body[data-view="dashboard"] .dash {
+  grid-template-columns: minmax(290px, 24%) minmax(0, 1fr);
+}
+
 .dash-right {
   display: grid;
-  grid-template-rows: minmax(0, 1.35fr) minmax(0, 1fr);
+  /* keys ≈ top 40%, live log gets the rest */
+  grid-template-rows: minmax(0, 2fr) minmax(0, 3fr);
   gap: var(--gap);
   min-height: 0;
   min-width: 0;
@@ -302,6 +320,17 @@ body[data-view="simulator"] #workspace {
 
 .pad {
   padding: 10px;
+}
+
+/* 01 — tool/form panel: paper tone so it reads as a control surface, not a data list */
+.panel-tool {
+  background: var(--paper);
+}
+
+/* 03 — live log: grey head strip separates the stream from the key table above */
+.panel-log > .panel-head,
+.panel-log .tbl th {
+  background: #efefea;
 }
 
 /* ---------- Form fields ---------- */
@@ -604,13 +633,39 @@ body[data-view="simulator"] #workspace {
   color: var(--red);
 }
 
+.tbl td.trunc-s {
+  max-width: 88px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Key column takes the leftover width; its lines ellipsize (full text in title). */
+.tbl td.kcell {
+  width: 100%;
+  max-width: 0;
+}
+
+.kcell > div {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .row-actions {
   display: inline-flex;
-  gap: 4px;
+  flex-direction: column;
+  gap: 3px;
+  width: 104px;
+}
+
+.row-actions > button {
+  width: 100%;
+  min-width: 0;
 }
 
 .mini {
-  height: 26px;
+  height: 22px;
   padding: 0 8px;
   border: 1px solid var(--ink);
   background: var(--panel);
@@ -686,8 +741,6 @@ tr.is-dead .k-name-text {
 .tags {
   font-family: var(--mono);
   font-size: 10.5px;
-  line-height: 1.5;
-  white-space: nowrap;
 }
 
 /* Quota meter: 20 discrete cells, like a hardware level meter */
@@ -783,7 +836,7 @@ tr.is-dead .k-name-text {
 /* ---------- BURN ---------- */
 
 .burn {
-  min-width: 112px;
+  min-width: 104px;
   white-space: nowrap;
   height: 26px;
   padding: 0 8px;
@@ -819,8 +872,10 @@ tr.is-dead .k-name-text {
 
 .burn.confirm span,
 .burn.confirm:hover span {
+  padding: 0;
   background: none;
   color: var(--panel);
+  letter-spacing: 0.01em;
 }
 
 .burn:disabled {
@@ -927,13 +982,90 @@ tr.is-dead .k-name-text {
   }
 }
 
+/* 04 — simulator = an outside app: inverted header + dark terminal console */
+
+.sim-head {
+  background: var(--ink);
+  color: var(--panel);
+}
+
+.sim-head .muted {
+  color: #a3a39c;
+}
+
+.sim-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sim-controls {
+  flex: none;
+}
+
+.term {
+  --term-bg: #111111;
+  --term-fg: #ededed;
+  --term-mute: #8a8a85;
+  --term-line: #2a2a2a;
+  --term-ok: #3fb950;
+  --term-err: #ff5c69;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--term-bg);
+  color: var(--term-fg);
+}
+
+.term-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  min-height: 30px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--term-line);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.term-sub {
+  color: var(--term-mute);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
+
+.term .btn-text {
+  color: var(--term-mute);
+}
+
+.term .btn-text:hover {
+  color: var(--term-fg);
+}
+
 .console {
-  font-size: 12px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  scrollbar-color: #444 transparent;
+}
+
+.console::-webkit-scrollbar-thumb {
+  background: #444;
 }
 
 .ev {
-  padding: 7px 10px;
-  border-bottom: 1px solid var(--faint);
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--term-line);
 }
 
 .ev-meta {
@@ -941,33 +1073,77 @@ tr.is-dead .k-name-text {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  margin-bottom: 3px;
-  font-family: var(--mono);
+  margin-bottom: 4px;
   font-size: 10.5px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  color: var(--term-mute);
+}
+
+.ev-meta .tag {
+  color: var(--term-fg);
 }
 
 .ev-meta .end {
   margin-left: auto;
-  color: var(--mute);
   font-variant-numeric: tabular-nums;
+}
+
+.term .code {
+  border-color: var(--term-ok);
+  color: var(--term-ok);
+}
+
+.term .code.err {
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff;
 }
 
 .ev p {
   margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ev p::before {
+  content: "> ";
+  color: var(--term-mute);
 }
 
 .ev.err p {
-  color: var(--red);
+  color: var(--term-err);
 }
 
 .console-empty {
-  padding: 40px 12px;
+  padding: 48px 12px;
   text-align: center;
-  color: var(--mute);
-  font-family: var(--mono);
+  color: var(--term-mute);
   font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+/* Simulator-only view: controls on the left, terminal fills the rest */
+body[data-view="simulator"] .sim-body {
+  display: grid;
+  grid-template-columns: minmax(340px, 30%) minmax(0, 1fr);
+}
+
+body[data-view="simulator"] .sim-controls {
+  border-right: 1px solid var(--ink);
+}
+
+body[data-view="simulator"] .sim-controls .scen {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body[data-view="simulator"] .sim-controls .scen button {
+  border-left: 0;
+  border-top: 1px solid var(--ink);
+}
+
+body[data-view="simulator"] .sim-controls .scen button:first-child {
+  border-top: 0;
 }
 
 /* ---------- Responsive ---------- */
@@ -1033,6 +1209,14 @@ tr.is-dead .k-name-text {
   .sim-grid,
   .scen {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  body[data-view="simulator"] .sim-body {
+    display: flex;
+  }
+
+  body[data-view="simulator"] .sim-controls {
+    border-right: 0;
   }
 
   .scen button {

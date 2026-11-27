@@ -67,11 +67,13 @@ export async function initSimulator() {
 
   root.innerHTML = `
     <section class="panel sim">
-      <header class="panel-head">
+      <header class="panel-head sim-head">
         <span><span class="idx">04</span>Simülatör · 3. Parti App</span>
         <span class="muted">POST /v1/messages</span>
       </header>
 
+      <div class="sim-body">
+      <div class="sim-controls">
       <div class="sim-grid">
         <div class="field">
           <label class="label" for="simApiKey">x-api-key</label>
@@ -101,12 +103,16 @@ export async function initSimulator() {
         <button id="forbiddenModelBtn" type="button"><i aria-hidden="true">▶</i><b>403</b><span>Yasaklı model · Opus</span></button>
         <button id="loopBugBtn" type="button"><i aria-hidden="true">▶</i><b>429</b><span id="loopBtnLabel">${LOOP_LABEL}</span></button>
       </div>
+      </div>
 
-      <header class="panel-head">
-        <span>Konsol</span>
-        <button id="clearConsoleBtn" type="button" class="btn-text">Temizle</button>
-      </header>
-      <div id="simConsole" class="panel-body console" aria-live="polite"></div>
+      <div class="term">
+        <header class="term-head">
+          <span>Konsol <span class="term-sub">· uygulama çıktısı</span></span>
+          <button id="clearConsoleBtn" type="button" class="btn-text">Temizle</button>
+        </header>
+        <div id="simConsole" class="console" aria-live="polite"></div>
+      </div>
+      </div>
     </section>
   `;
 
@@ -153,7 +159,7 @@ export async function initSimulator() {
         <div class="ev ${ev.ok ? "" : "err"}">
           <div class="ev-meta">
             <span class="code ${ev.ok ? "" : "err"}">${ev.status || "ERR"}</span>
-            <span>${escapeHtml(ev.ok ? ev.tag : `${ev.tag} · ${ev.errType}`)}</span>
+            <span class="tag">${escapeHtml(ev.ok ? ev.tag : `${ev.tag} · ${ev.errType}`)}</span>
             <span class="muted">${escapeHtml(modelLabel(ev.model))}</span>
             <span class="end">${ev.tokens ? `${ev.tokens} TOK · ` : ""}${ev.time}</span>
           </div>

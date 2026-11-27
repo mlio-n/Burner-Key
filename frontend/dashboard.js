@@ -93,7 +93,7 @@ function segButtons(options, current) {
 function renderShell(root) {
   root.innerHTML = `
     <div class="dash">
-      <section class="panel">
+      <section class="panel panel-tool">
         <header class="panel-head">
           <span><span class="idx">01</span>Anahtar Üret</span>
           <span class="muted">POST /admin/keys</span>
@@ -163,25 +163,23 @@ function renderShell(root) {
             </div>
           </header>
           <div class="panel-body">
-            <table class="tbl">
+            <table class="tbl key-tbl">
               <thead>
                 <tr>
                   <th>Anahtar</th>
-                  <th>Modeller</th>
                   <th>Kota</th>
-                  <th class="r">İst.</th>
                   <th>Kalan</th>
                   <th class="r">Kill Switch</th>
                 </tr>
               </thead>
               <tbody id="keysTableBody">
-                <tr class="empty"><td colspan="6">YÜKLENİYOR…</td></tr>
+                <tr class="empty"><td colspan="4">YÜKLENİYOR…</td></tr>
               </tbody>
             </table>
           </div>
         </section>
 
-        <section class="panel">
+        <section class="panel panel-log">
           <header class="panel-head">
             <span><span class="idx">03</span>Canlı Log</span>
             <span class="muted">GET /admin/logs · 2s</span>
@@ -191,16 +189,14 @@ function renderShell(root) {
               <thead>
                 <tr>
                   <th>Saat</th>
-                  <th>Anahtar</th>
-                  <th>Model</th>
                   <th>Kod</th>
-                  <th class="r">Token</th>
-                  <th class="r">Maliyet</th>
+                  <th>Anahtar</th>
                   <th>Detay</th>
+                  <th class="r">Maliyet</th>
                 </tr>
               </thead>
               <tbody id="logsTableBody">
-                <tr class="empty"><td colspan="7">HENÜZ İSTEK YOK</td></tr>
+                <tr class="empty"><td colspan="5">HENÜZ İSTEK YOK</td></tr>
               </tbody>
             </table>
           </div>
@@ -273,20 +269,22 @@ function rowHtml(k) {
   if (spent > 0 && on === 0) on = 1;
   const cells = Array.from({ length: METER_CELLS }, (_, i) => `<i class="${i < on ? "on" : ""}"></i>`).join("");
   const provider = k.provider ? ` · ${escapeHtml(String(k.provider).toUpperCase())}` : "";
+  const models = (k.allowed_models || []).map(modelLabel).join(" · ");
 
   return `
-    <td>
-      <div class="k-name"><span class="k-id">#${String(k.id).padStart(3, "0")}</span><span class="k-name-text">${escapeHtml(
-        k.name
-      )}</span></div>
+    <td class="kcell">
+      <div class="k-name" title="${escapeHtml(k.name)}"><span class="k-id">#${String(k.id).padStart(
+        3,
+        "0"
+      )}</span><span class="k-name-text">${escapeHtml(k.name)}</span></div>
       <div class="sub">${escapeHtml(k.key_preview)}${provider}</div>
+      <div class="sub tags" title="${escapeHtml(models)}">${escapeHtml(models)}</div>
     </td>
-    <td><div class="tags">${(k.allowed_models || []).map((m) => escapeHtml(modelLabel(m))).join("<br>")}</div></td>
     <td class="nowrap">
       <div class="meter ${pct >= 80 ? "hot" : ""}" title="%${pct.toFixed(1)}">${cells}</div>
-      <div class="sub">$${spent.toFixed(4)} / $${budget.toFixed(4)} · ${String(Math.round(pct)).padStart(3, " ")}%</div>
+      <div class="sub">$${spent.toFixed(4)} / $${budget.toFixed(4)}</div>
+      <div class="sub num">${Math.round(pct)}% · ${Number(k.request_count) || 0} İST</div>
     </td>
-    <td class="r mono num">${Number(k.request_count) || 0}</td>
     <td class="nowrap">${statusCell(k)}</td>
     <td class="r nowrap"><div class="row-actions">${testButton(k)}${burnButton(k)}</div></td>
   `;
@@ -311,7 +309,7 @@ function renderKeys() {
 
   if (!list.length) {
     rowSigs.clear();
-    tbody.innerHTML = `<tr class="empty"><td colspan="6">${
+    tbody.innerHTML = `<tr class="empty"><td colspan="4">${
       state.keys.length
         ? `AKTİF ANAHTAR YOK · <button type="button" class="link-btn" data-goto-all>TÜMÜ SEKMESİNE BAKIN</button>`
         : "HENÜZ ANAHTAR YOK · SOLDAN ÜRETİN"
@@ -372,24 +370,25 @@ function renderLogs(logs) {
 
   const tbody = document.getElementById("logsTableBody");
   if (!logs.length) {
-    tbody.innerHTML = `<tr class="empty"><td colspan="7">HENÜZ İSTEK YOK</td></tr>`;
+    tbody.innerHTML = `<tr class="empty"><td colspan="5">HENÜZ İSTEK YOK</td></tr>`;
     return;
   }
 
   tbody.innerHTML = logs
     .map((log) => {
       const ok = log.status_code >= 200 && log.status_code < 300;
+      const model = log.model ? modelLabel(log.model) : "-";
+      const tokens = `${Number(log.input_tokens) || 0}/${Number(log.output_tokens) || 0} tok`;
+      // Success rows show model + tokens; failures show the proxy's reason. Full line in the tooltip.
+      const detail = ok ? `${model} · ${tokens}` : log.error_message || "Hata";
+      const full = [log.burner_key_name || "-", log.model || "-", tokens, log.error_message || "OK"].join(" · ");
       return `
-        <tr>
-          <td class="mono nowrap muted">${formatTime(log.created_at)}</td>
-          <td class="nowrap">${escapeHtml(log.burner_key_name || "-")}</td>
-          <td class="mono nowrap">${escapeHtml(log.model ? modelLabel(log.model) : "-")}</td>
+        <tr title="${escapeHtml(full)}">
+          <td class="mono muted">${formatTime(log.created_at)}</td>
           <td><span class="code ${ok ? "" : "err"}">${escapeHtml(log.status_code)}</span></td>
-          <td class="r mono nowrap">${Number(log.input_tokens) || 0}/${Number(log.output_tokens) || 0}</td>
-          <td class="r mono nowrap">$${Number(log.cost_usd || 0).toFixed(5)}</td>
-          <td class="trunc ${ok ? "muted" : ""}" title="${escapeHtml(log.error_message || "OK")}">${escapeHtml(
-            log.error_message || "OK"
-          )}</td>
+          <td class="trunc-s">${escapeHtml(log.burner_key_name || "-")}</td>
+          <td class="trunc ${ok ? "mono muted" : ""}">${escapeHtml(detail)}</td>
+          <td class="r mono">$${Number(log.cost_usd || 0).toFixed(5)}</td>
         </tr>
       `;
     })
