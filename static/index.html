@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="tr" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Burner Key — Claude BYOK Kontrol Paneli</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100 antialiased">
+  <div class="mx-auto max-w-6xl px-4 py-6 space-y-6">
+    <!-- Header -->
+    <header class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+      <div class="flex items-center gap-3">
+        <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-rose-500 to-amber-500 text-lg font-bold text-white shadow-lg shadow-rose-500/20">
+          🔥
+        </div>
+        <div>
+          <h1 class="text-xl font-bold tracking-tight text-white">Burner Key</h1>
+          <p class="text-xs text-slate-400">
+            3. Parti BYOK Uygulamaları için Bütçe, Süre (TTL) ve Kill-Switch Korumalı Claude Proxy
+          </p>
+        </div>
+      </div>
+      <div class="flex items-center gap-3 text-xs">
+        <span id="upstreamBadge" class="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 font-mono text-slate-300">
+          Bağlanıyor...
+        </span>
+        <span class="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-emerald-300">
+          2 sn otomatik yenileme
+        </span>
+      </div>
+    </header>
+
+    <!-- One-time Created Key Alert -->
+    <section id="newKeyBanner" class="hidden rounded-xl border-2 border-emerald-500/60 bg-emerald-950/40 p-4 shadow-lg">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p class="text-xs font-semibold uppercase tracking-wider text-emerald-300">
+            Yeni Burner Key Oluşturuldu (Bu anahtarı şimdi kopyalayın, tekrar tam gösterilmez)
+          </p>
+          <code id="newKeyValue" class="mt-1.5 block rounded-lg bg-slate-950 px-3 py-2 font-mono text-sm font-bold text-emerald-300 border border-emerald-500/30"></code>
+        </div>
+        <div class="flex items-center gap-2">
+          <button
+            id="copyNewKeyBtn"
+            onclick="copyNewKey()"
+            class="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 transition"
+          >
+            Kopyala
+          </button>
+          <button
+            onclick="document.getElementById('newKeyBanner').classList.add('hidden')"
+            class="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800"
+          >
+            Kapat
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Main Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      <!-- Create Key Form (Left 4 cols) -->
+      <section class="lg:col-span-4 rounded-xl border border-slate-800 bg-slate-900/70 p-5">
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-200 mb-4">
+          Yeni Geçici Anahtar Üret
+        </h2>
+
+        <form id="createKeyForm" class="space-y-4 text-xs">
+          <div>
+            <label class="block text-slate-300 mb-1">Uygulama / Anahtar Adı</label>
+            <input
+              id="keyName"
+              type="text"
+              required
+              value="Demo AI Assistant"
+              class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 focus:border-emerald-500 focus:outline-none"
+            />
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-slate-300 mb-1">Bütçe Limiti ($)</label>
+              <input
+                id="budgetLimit"
+                type="number"
+                step="0.001"
+                min="0.0001"
+                required
+                value="0.01"
+                class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-slate-100 focus:border-emerald-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label class="block text-slate-300 mb-1">Süre / TTL (Dakika)</label>
+              <input
+                id="ttlMinutes"
+                type="number"
+                min="1"
+                required
+                value="60"
+                class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-slate-100 focus:border-emerald-500 focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-slate-300 mb-1.5">İzinli Claude Modelleri</label>
+            <div id="modelsContainer" class="space-y-1.5 rounded-lg border border-slate-800 bg-slate-950/70 p-3">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            class="w-full rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-emerald-500 transition shadow"
+          >
+            Burner Key Oluştur
+          </button>
+          <p id="formError" class="hidden text-rose-400 text-xs"></p>
+        </form>
+      </section>
+
+      <!-- Keys Table (Right 8 cols) -->
+      <section class="lg:col-span-8 rounded-xl border border-slate-800 bg-slate-900/70 p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-200">
+            Aktif ve Geçmiş Anahtarlar
+          </h2>
+          <span id="keyCount" class="rounded-full bg-slate-800 px-2.5 py-0.5 text-xs text-slate-300">
+            0 anahtar
+          </span>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead>
+              <tr class="border-b border-slate-800 text-slate-400">
+                <th class="py-2 pr-3 font-medium">Ad / Önizleme</th>
+                <th class="py-2 pr-3 font-medium">Durum</th>
+                <th class="py-2 pr-3 font-medium w-48">Harcama / Bütçe</th>
+                <th class="py-2 pr-3 font-medium">İstek</th>
+                <th class="py-2 pr-3 font-medium">Modeller</th>
+                <th class="py-2 font-medium text-right">İşlem</th>
+              </tr>
+            </thead>
+            <tbody id="keysTableBody" class="divide-y divide-slate-800/70">
+              <tr>
+                <td colspan="6" class="py-8 text-center text-slate-500">Yükleniyor...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Live Logs -->
+    <section class="rounded-xl border border-slate-800 bg-slate-900/70 p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-200">
+          Canlı Proxy İstek Logları
+        </h2>
+        <span class="text-[11px] text-slate-400">Son 50 istek</span>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs">
+          <thead>
+            <tr class="border-b border-slate-800 text-slate-400">
+              <th class="py-2 pr-3 font-medium">Saat</th>
+              <th class="py-2 pr-3 font-medium">Anahtar</th>
+              <th class="py-2 pr-3 font-medium">Model</th>
+              <th class="py-2 pr-3 font-medium">Durum</th>
+              <th class="py-2 pr-3 font-medium">Token (In / Out)</th>
+              <th class="py-2 pr-3 font-medium">Maliyet</th>
+              <th class="py-2 font-medium">Detay</th>
+            </tr>
+          </thead>
+          <tbody id="logsTableBody" class="divide-y divide-slate-800/70">
+            <tr>
+              <td colspan="7" class="py-6 text-center text-slate-500">Henüz istek kaydı yok.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const STATUS_STYLES = {
+      active: "border-emerald-500/40 bg-emerald-500/15 text-emerald-300",
+      revoked: "border-rose-500/40 bg-rose-500/15 text-rose-300",
+      expired: "border-amber-500/40 bg-amber-500/15 text-amber-300",
+      budget_exceeded: "border-orange-500/40 bg-orange-500/15 text-orange-300",
+    };
+
+    const STATUS_LABELS = {
+      active: "AKTİF",
+      revoked: "İPTAL (REVOKED)",
+      expired: "SÜRESİ DOLDU",
+      budget_exceeded: "BÜTÇE DOLDU",
+    };
+
+    function escapeHtml(str) {
+      return String(str ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function formatTime(iso) {
+      if (!iso) return "-";
+      return new Date(iso).toLocaleTimeString("tr-TR", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+    }
+
+    async function loadHealthAndModels() {
+      try {
+        const [healthRes, modelsRes] = await Promise.all([
+          fetch("/health"),
+          fetch("/admin/models"),
+        ]);
+        const health = await healthRes.json();
+        document.getElementById("upstreamBadge").textContent =
+          `Upstream: ${health.upstream_base_url}`;
+
+        const models = await modelsRes.json();
+        const container = document.getElementById("modelsContainer");
+        container.innerHTML = models
+          .map(
+            (m, idx) => `
+            <label class="flex items-center gap-2 cursor-pointer text-slate-200 hover:text-white">
+              <input
+                type="checkbox"
+                name="allowed_model"
+                value="${escapeHtml(m)}"
+                ${idx === 0 ? "checked" : ""}
+                class="rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-0"
+              />
+              <span class="font-mono text-[11px]">${escapeHtml(m)}</span>
+            </label>
+          `
+          )
+          .join("");
+      } catch (err) {
+        document.getElementById("upstreamBadge").textContent = "Backend Çevrimdışı";
+      }
+    }
+
+    async function refreshData() {
+      try {
+        const [keysRes, logsRes] = await Promise.all([
+          fetch("/admin/keys"),
+          fetch("/admin/logs?limit=30"),
+        ]);
+        const keys = await keysRes.json();
+        const logs = await logsRes.json();
+
+        renderKeys(keys);
+        renderLogs(logs);
+      } catch (err) {
+        console.error("Refresh error:", err);
+      }
+    }
+
+    function renderKeys(keys) {
+      document.getElementById("keyCount").textContent = `${keys.length} anahtar`;
+      const tbody = document.getElementById("keysTableBody");
+
+      if (!keys.length) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="6" class="py-8 text-center text-slate-500">
+              Henüz burner key yok. Soldaki formdan ilk anahtarı oluşturun.
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = keys
+        .map((k) => {
+          const pct = Math.min(100, (k.spent_usd / Math.max(k.budget_limit_usd, 0.000001)) * 100);
+          const barColor =
+            pct >= 80 ? "bg-rose-500" : pct >= 60 ? "bg-amber-500" : "bg-emerald-500";
+          const nearLimitWarning =
+            pct >= 80 && k.status === "active"
+              ? `<span class="ml-1 rounded bg-amber-500/20 px-1 py-0.5 text-[10px] text-amber-300">%80+</span>`
+              : "";
+
+          return `
+            <tr class="hover:bg-slate-800/30">
+              <td class="py-3 pr-3">
+                <div class="font-semibold text-slate-100">${escapeHtml(k.name)}</div>
+                <div class="font-mono text-[11px] text-slate-400">${escapeHtml(k.key_preview)}</div>
+                <div class="text-[10px] text-slate-500">Bitiş: ${formatTime(k.expires_at)}</div>
+              </td>
+              <td class="py-3 pr-3">
+                <span class="inline-block rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                  STATUS_STYLES[k.status] || STATUS_STYLES.active
+                }">
+                  ${STATUS_LABELS[k.status] || escapeHtml(k.status)}
+                </span>
+              </td>
+              <td class="py-3 pr-3">
+                <div class="flex justify-between font-mono text-[11px] mb-1">
+                  <span>$${Number(k.spent_usd).toFixed(4)}</span>
+                  <span class="text-slate-400">/ $${Number(k.budget_limit_usd).toFixed(4)}${nearLimitWarning}</span>
+                </div>
+                <div class="h-2 w-full rounded-full bg-slate-800 overflow-hidden">
+                  <div class="h-full ${barColor} transition-all duration-300" style="width: ${pct}%"></div>
+                </div>
+              </td>
+              <td class="py-3 pr-3 font-mono text-slate-300">${k.request_count}</td>
+              <td class="py-3 pr-3">
+                <div class="flex flex-wrap gap-1">
+                  ${k.allowed_models
+                    .map(
+                      (m) =>
+                        `<span class="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">${escapeHtml(
+                          m.replace(/-\d{8}$/, "")
+                        )}</span>`
+                    )
+                    .join("")}
+                </div>
+              </td>
+              <td class="py-3 text-right">
+                <button
+                  onclick="revokeKey(${k.id})"
+                  ${k.is_revoked ? "disabled" : ""}
+                  class="rounded-lg border border-rose-500/40 bg-rose-600/90 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-rose-500 disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-not-allowed transition"
+                >
+                  ${k.is_revoked ? "Yakıldı" : "İptal Et"}
+                </button>
+              </td>
+            </tr>
+          `;
+        })
+        .join("");
+    }
+
+    function renderLogs(logs) {
+      const tbody = document.getElementById("logsTableBody");
+      if (!logs.length) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="7" class="py-6 text-center text-slate-500">Henüz istek kaydı yok.</td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = logs
+        .map((log) => {
+          const ok = log.status_code === 200;
+          return `
+            <tr class="hover:bg-slate-800/30">
+              <td class="py-2 pr-3 font-mono text-slate-400">${formatTime(log.created_at)}</td>
+              <td class="py-2 pr-3 text-slate-200">${escapeHtml(log.burner_key_name || "-")}</td>
+              <td class="py-2 pr-3 font-mono text-slate-300">${escapeHtml(log.model || "-")}</td>
+              <td class="py-2 pr-3">
+                <span class="rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold ${
+                  ok ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300"
+                }">
+                  ${log.status_code}
+                </span>
+              </td>
+              <td class="py-2 pr-3 font-mono text-slate-400">${log.input_tokens} / ${log.output_tokens}</td>
+              <td class="py-2 pr-3 font-mono text-slate-300">$${Number(log.cost_usd).toFixed(5)}</td>
+              <td class="py-2 text-slate-400">${escapeHtml(log.error_message || "OK")}</td>
+            </tr>
+          `;
+        })
+        .join("");
+    }
+
+    async function revokeKey(id) {
+      await fetch(`/admin/keys/${id}/revoke`, { method: "POST" });
+      await refreshData();
+    }
+
+    function copyNewKey() {
+      const val = document.getElementById("newKeyValue").textContent;
+      navigator.clipboard.writeText(val);
+      const btn = document.getElementById("copyNewKeyBtn");
+      btn.textContent = "Kopyalandı!";
+      setTimeout(() => (btn.textContent = "Kopyala"), 1500);
+    }
+
+    document.getElementById("createKeyForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const errEl = document.getElementById("formError");
+      errEl.classList.add("hidden");
+
+      const checkedModels = Array.from(
+        document.querySelectorAll('input[name="allowed_model"]:checked')
+      ).map((el) => el.value);
+
+      if (!checkedModels.length) {
+        errEl.textContent = "En az bir Claude modeli seçmelisiniz.";
+        errEl.classList.remove("hidden");
+        return;
+      }
+
+      const payload = {
+        name: document.getElementById("keyName").value,
+        budget_limit_usd: Number(document.getElementById("budgetLimit").value),
+        ttl_minutes: Number(document.getElementById("ttlMinutes").value),
+        allowed_models: checkedModels,
+      };
+
+      const res = await fetch("/admin/keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        errEl.textContent = data.detail || "Anahtar oluşturulamadı.";
+        errEl.classList.remove("hidden");
+        return;
+      }
+
+      document.getElementById("newKeyValue").textContent = data.api_key;
+      document.getElementById("newKeyBanner").classList.remove("hidden");
+      await refreshData();
+    });
+
+    loadHealthAndModels();
+    refreshData();
+    setInterval(refreshData, 2000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+# Environment variables (real API keys live here only)
+.env
+.env.*
+!.env.example
+
+# SQLite databases
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# OS / Editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
