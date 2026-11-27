@@ -17,13 +17,23 @@ const TTL_OPTIONS = [
   ["15M", 15],
   ["1H", 60],
   ["24H", 1440],
+  ["ÖZEL", "custom"],
 ];
+
+const TTL_UNITS = [
+  ["DK", "min", 1],
+  ["SAAT", "hour", 60],
+  ["GÜN", "day", 1440],
+];
+
+const MAX_TTL_MINUTES = 43200;
 
 const QUOTA_OPTIONS = [
   ["$0.005", 0.005],
   ["$0.05", 0.05],
   ["$0.50", 0.5],
   ["$5.00", 5],
+  ["ÖZEL", "custom"],
 ];
 
 const BURN_CONFIRM_MS = 3000;
@@ -31,7 +41,11 @@ const METER_CELLS = 20;
 
 const state = {
   ttl: 60,
+  ttlCustom: false,
+  ttlUnit: "min",
   budget: 0.005,
+  budgetCustom: false,
+  submitting: false,
   filter: "active",
   keys: [],
   pendingBurnId: null,
@@ -74,11 +88,45 @@ function formatTime(iso) {
 }
 
 function formatCountdown(ms) {
-  const total = Math.max(0, Math.floor(ms / 1000));
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  return [h, m, s].map((n) => String(n).padStart(2, "0")).join(":");
+  const total = Math.floor(ms / 1000);
+  if (total <= 0) return "DOLDU";
+  if (total < 60) return `${total}sn`;
+  if (total < 3600) {
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return `${m}dk ${String(s).padStart(2, "0")}sn`;
+  }
+  if (total < 86400) {
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    return `${h}sa ${m}dk`;
+  }
+  const days = Math.floor(total / 86400);
+  if (days > 365) {
+    const y = Math.floor(days / 365);
+    const remDays = days % 365;
+    return `${y}y ${remDays}g`;
+  }
+  const remHours = Math.floor((total % 86400) / 3600);
+  return `${days}g ${remHours}sa`;
+}
+
+function formatExpiryTooltip(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `Bitiş: ${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()} ${pad(
+    d.getHours()
+  )}:${pad(d.getMinutes())}`;
+}
+
+function formatUsdReadout(val) {
+  if (val < 0.001) return `$${Number(val.toFixed(6))}`;
+  if (val < 1) return `$${val.toFixed(3)}`;
+  return Math.abs(val * 100 - Math.round(val * 100)) < 1e-9
+    ? `$${val.toFixed(2)}`
+    : `$${val.toFixed(3)}`;
 }
 
 function segButtons(options, current) {
@@ -115,14 +163,45 @@ function renderShell(root) {
           <div class="field">
             <div class="label"><span>Süre (TTL)</span><b id="ttlReadout"></b></div>
             <div id="ttlSeg" class="seg full" role="group" aria-label="Süre">
-              ${segButtons(TTL_OPTIONS, state.ttl)}
+              ${segButtons(TTL_OPTIONS, state.ttlCustom ? "custom" : state.ttl)}
+            </div>
+            <div id="ttlCustomRow" class="custom-row" hidden>
+              <input
+                id="ttlCustomVal"
+                class="custom-num mono"
+                type="number"
+                min="1"
+                step="1"
+                value="30"
+                inputmode="numeric"
+                aria-label="Özel süre değeri"
+              />
+              <div id="ttlUnitSeg" class="seg custom-units" role="group" aria-label="Süre birimi">
+                ${TTL_UNITS.map(
+                  ([label, key]) =>
+                    `<button type="button" data-val="${key}" aria-pressed="${key === state.ttlUnit}">${label}</button>`
+                ).join("")}
+              </div>
             </div>
           </div>
 
           <div class="field">
             <div class="label"><span>Kota (USD)</span><b id="quotaReadout"></b></div>
-            <div id="quotaSeg" class="seg full" role="group" aria-label="Kota">
-              ${segButtons(QUOTA_OPTIONS, state.budget)}
+            <div id="quotaSeg" class="seg full compact" role="group" aria-label="Kota">
+              ${segButtons(QUOTA_OPTIONS, state.budgetCustom ? "custom" : state.budget)}
+            </div>
+            <div id="quotaCustomRow" class="custom-row custom-row-prefix" hidden>
+              <span class="custom-prefix" aria-hidden="true">$</span>
+              <input
+                id="quotaCustomVal"
+                class="custom-num mono"
+                type="number"
+                step="0.001"
+                min="0.001"
+                placeholder="0.25"
+                inputmode="decimal"
+                aria-label="Özel kota tutarı (USD)"
+              />
             </div>
           </div>
 
@@ -206,9 +285,67 @@ function renderShell(root) {
   `;
 }
 
-function updateReadouts() {
-  document.getElementById("ttlReadout").textContent = `${state.ttl} DK`;
-  document.getElementById("quotaReadout").textContent = `$${state.budget.toFixed(3)}`;
+function getResolvedTtl() {
+  if (!state.ttlCustom) {
+    return { valid: true, minutes: state.ttl, readout: `${state.ttl} DK` };
+  }
+  const input = document.getElementById("ttlCustomVal");
+  const raw = input ? input.value.trim() : "";
+  if (!raw) {
+    return { valid: false, minutes: null, readout: "GEÇERSİZ" };
+  }
+  const val = Number(raw);
+  if (!Number.isFinite(val) || val <= 0 || !Number.isInteger(val)) {
+    return { valid: false, minutes: null, readout: "GEÇERSİZ" };
+  }
+  const [unitLabel, , multiplier] = TTL_UNITS.find(([, key]) => key === state.ttlUnit) || TTL_UNITS[0];
+  const minutes = val * multiplier;
+  if (minutes > MAX_TTL_MINUTES) {
+    return { valid: false, minutes: null, readout: "MAX 30 GÜN" };
+  }
+  const readout = state.ttlUnit === "min" ? `${val} DK` : `${val} ${unitLabel} (${minutes} DK)`;
+  return { valid: true, minutes, readout };
+}
+
+function getResolvedBudget() {
+  if (!state.budgetCustom) {
+    return { valid: true, budget: state.budget, readout: `$${state.budget.toFixed(3)}` };
+  }
+  const input = document.getElementById("quotaCustomVal");
+  const raw = input ? input.value.trim() : "";
+  if (!raw) {
+    return { valid: false, budget: null, readout: "TUTAR GİRİN" };
+  }
+  const val = Number(raw);
+  if (!Number.isFinite(val) || val <= 0) {
+    return { valid: false, budget: null, readout: "GEÇERSİZ" };
+  }
+  return { valid: true, budget: val, readout: formatUsdReadout(val) };
+}
+
+function syncCustomControls() {
+  const ttlRow = document.getElementById("ttlCustomRow");
+  const quotaRow = document.getElementById("quotaCustomRow");
+  const ttlReadout = document.getElementById("ttlReadout");
+  const quotaReadout = document.getElementById("quotaReadout");
+  const btn = document.getElementById("createKeyBtn");
+
+  ttlRow.hidden = !state.ttlCustom;
+  quotaRow.hidden = !state.budgetCustom;
+
+  const ttlInfo = getResolvedTtl();
+  const budgetInfo = getResolvedBudget();
+
+  ttlReadout.textContent = ttlInfo.readout;
+  ttlReadout.classList.toggle("is-invalid", !ttlInfo.valid);
+  ttlRow.classList.toggle("is-invalid", state.ttlCustom && !ttlInfo.valid);
+
+  quotaReadout.textContent = budgetInfo.readout;
+  quotaReadout.classList.toggle("is-invalid", !budgetInfo.valid);
+  quotaRow.classList.toggle("is-invalid", state.budgetCustom && !budgetInfo.valid);
+
+  btn.disabled = state.submitting || !ttlInfo.valid || !budgetInfo.valid;
+  btn.classList.toggle("is-busy", state.submitting);
 }
 
 function bindSeg(id, onPick) {
@@ -270,6 +407,7 @@ function rowHtml(k) {
   const cells = Array.from({ length: METER_CELLS }, (_, i) => `<i class="${i < on ? "on" : ""}"></i>`).join("");
   const provider = k.provider ? ` · ${escapeHtml(String(k.provider).toUpperCase())}` : "";
   const models = (k.allowed_models || []).map(modelLabel).join(" · ");
+  const expiryTitle = formatExpiryTooltip(k.expires_at);
 
   return `
     <td class="kcell">
@@ -285,7 +423,7 @@ function rowHtml(k) {
       <div class="sub">$${spent.toFixed(4)} / $${budget.toFixed(4)}</div>
       <div class="sub num">${Math.round(pct)}% · ${Number(k.request_count) || 0} İST</div>
     </td>
-    <td class="nowrap">${statusCell(k)}</td>
+    <td class="nowrap"${expiryTitle ? ` title="${escapeHtml(expiryTitle)}"` : ""}>${statusCell(k)}</td>
     <td class="r nowrap"><div class="row-actions">${testButton(k)}${burnButton(k)}</div></td>
   `;
 }
@@ -348,16 +486,30 @@ function renderKeys() {
   const sameOrder = current.length === rows.length && rows.every((tr, i) => current[i] === tr);
   if (!sameOrder) rows.forEach((tr) => tbody.appendChild(tr));
 
-  tickCountdowns();
+  tickCountdowns(true);
 }
 
-function tickCountdowns() {
+function tickCountdowns(force = false) {
   const now = Date.now();
   document.querySelectorAll("#keysTableBody .ttl[data-expires]").forEach((el) => {
-    const left = new Date(el.dataset.expires).getTime() - now;
+    if (!force && el.dataset.nextTick && now < Number(el.dataset.nextTick)) {
+      return;
+    }
+    const expiresMs = new Date(el.dataset.expires).getTime();
+    const left = expiresMs - now;
     const text = formatCountdown(left);
     if (el.textContent !== text) el.textContent = text;
     el.classList.toggle("low", left <= 60_000);
+
+    if (left < 3_600_000) {
+      delete el.dataset.nextTick;
+    } else if (left < 86_400_000) {
+      const remMs = left % 60_000 || 60_000;
+      el.dataset.nextTick = String(now + Math.min(remMs, left - 3_599_000));
+    } else {
+      const remMs = left % 3_600_000 || 3_600_000;
+      el.dataset.nextTick = String(now + Math.min(remMs, left - 86_399_000));
+    }
   });
 }
 
@@ -401,21 +553,49 @@ export async function initDashboard() {
   const root = document.getElementById("dashboard-root");
   if (!root) return;
   renderShell(root);
-  updateReadouts();
+  syncCustomControls();
 
   let latestCreatedKey = "";
 
   bindSeg("ttlSeg", (v) => {
-    state.ttl = Number(v);
-    updateReadouts();
+    if (v === "custom") {
+      state.ttlCustom = true;
+      syncCustomControls();
+      const input = document.getElementById("ttlCustomVal");
+      input.focus();
+      input.select();
+    } else {
+      state.ttlCustom = false;
+      state.ttl = Number(v);
+      syncCustomControls();
+    }
+  });
+  bindSeg("ttlUnitSeg", (v) => {
+    state.ttlUnit = v;
+    syncCustomControls();
   });
   bindSeg("quotaSeg", (v) => {
-    state.budget = Number(v);
-    updateReadouts();
+    if (v === "custom") {
+      state.budgetCustom = true;
+      syncCustomControls();
+      const input = document.getElementById("quotaCustomVal");
+      input.focus();
+      input.select();
+    } else {
+      state.budgetCustom = false;
+      state.budget = Number(v);
+      syncCustomControls();
+    }
   });
   bindSeg("keyFilter", (v) => {
     state.filter = v;
     renderKeys();
+  });
+
+  ["ttlCustomVal", "quotaCustomVal"].forEach((id) => {
+    const el = document.getElementById(id);
+    el.addEventListener("input", syncCustomControls);
+    el.addEventListener("change", syncCustomControls);
   });
 
   function updateModelCount() {
@@ -483,8 +663,18 @@ export async function initDashboard() {
   document.getElementById("createKeyForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const errEl = document.getElementById("formError");
-    const btn = document.getElementById("createKeyBtn");
     errEl.hidden = true;
+
+    const ttlInfo = getResolvedTtl();
+    const budgetInfo = getResolvedBudget();
+    if (!ttlInfo.valid || !budgetInfo.valid) {
+      errEl.textContent = !ttlInfo.valid
+        ? "GEÇERLİ BİR SÜRE GİRİN (1 DK – 30 GÜN)"
+        : "GEÇERLİ BİR KOTA TUTARI GİRİN (> $0)";
+      errEl.hidden = false;
+      syncCustomControls();
+      return;
+    }
 
     const checkedModels = Array.from(document.querySelectorAll('input[name="allowed_model"]:checked')).map(
       (el) => el.value
@@ -496,12 +686,13 @@ export async function initDashboard() {
     }
 
     const vault = document.querySelector('input[name="vault"]:checked');
-    btn.disabled = true;
+    state.submitting = true;
+    syncCustomControls();
     try {
       const created = await createKey({
         name: document.getElementById("keyName").value.trim() || "Burner Key",
-        budget_limit_usd: state.budget,
-        ttl_minutes: state.ttl,
+        budget_limit_usd: budgetInfo.budget,
+        ttl_minutes: ttlInfo.minutes,
         allowed_models: checkedModels,
         master_key_id: vault ? Number(vault.value) : null,
       });
@@ -516,7 +707,8 @@ export async function initDashboard() {
       errEl.textContent = (err.message || "Anahtar oluşturulamadı").toUpperCase();
       errEl.hidden = false;
     } finally {
-      btn.disabled = false;
+      state.submitting = false;
+      syncCustomControls();
     }
   });
 
@@ -598,5 +790,5 @@ export async function initDashboard() {
   await Promise.all([loadModels(), loadVaults()]);
   await refresh();
   setInterval(refresh, 2000);
-  setInterval(tickCountdowns, 1000);
+  setInterval(() => tickCountdowns(false), 1000);
 }
