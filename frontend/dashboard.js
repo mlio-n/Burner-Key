@@ -1,5 +1,6 @@
 /**
- * Admin Control Panel: key creation, spend progress bars, Kill Switch, and live logs.
+ * Admin Control Panel: quick key generator, active key list (live TTL countdown,
+ * quota meter, BURN kill switch) and live proxy logs.
  * Owner: Kerim
  */
 
@@ -7,23 +8,39 @@ import {
   createKey,
   fetchKeys,
   fetchLogs,
+  fetchMasterKeys,
   fetchModels,
   revokeKey,
 } from "./api.js";
 
-const STATUS_STYLES = {
-  active: "border-emerald-500/40 bg-emerald-500/15 text-emerald-300",
-  revoked: "border-rose-500/40 bg-rose-500/15 text-rose-300",
-  expired: "border-amber-500/40 bg-amber-500/15 text-amber-300",
-  budget_exceeded: "border-orange-500/40 bg-orange-500/15 text-orange-300",
+const TTL_OPTIONS = [
+  ["15M", 15],
+  ["1H", 60],
+  ["24H", 1440],
+];
+
+const QUOTA_OPTIONS = [
+  ["$0.005", 0.005],
+  ["$0.05", 0.05],
+  ["$0.50", 0.5],
+  ["$5.00", 5],
+];
+
+const BURN_CONFIRM_MS = 3000;
+const METER_CELLS = 20;
+
+const state = {
+  ttl: 60,
+  budget: 0.005,
+  filter: "active",
+  keys: [],
+  pendingBurnId: null,
+  burnTimer: null,
+  burningId: null,
+  logsSig: "",
 };
 
-const STATUS_LABELS = {
-  active: "AKTİF",
-  revoked: "İPTAL (REVOKED)",
-  expired: "SÜRESİ DOLDU",
-  budget_exceeded: "BÜTÇE DOLDU",
-};
+const rowSigs = new Map();
 
 function escapeHtml(str) {
   return String(str ?? "")
@@ -33,8 +50,13 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;");
 }
 
+// "claude-3-5-haiku-20241022" -> "claude-3-5-haiku" (display only)
+function modelLabel(model) {
+  return String(model).replace(/-\d{8}$/, "");
+}
+
 function formatTime(iso) {
-  if (!iso) return "-";
+  if (!iso) return "--:--:--";
   return new Date(iso).toLocaleTimeString("tr-TR", {
     hour: "2-digit",
     minute: "2-digit",
@@ -42,372 +64,504 @@ function formatTime(iso) {
   });
 }
 
+function formatCountdown(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return [h, m, s].map((n) => String(n).padStart(2, "0")).join(":");
+}
+
+function segButtons(options, current) {
+  return options
+    .map(
+      ([label, value]) =>
+        `<button type="button" data-val="${value}" aria-pressed="${value === current}">${label}</button>`
+    )
+    .join("");
+}
+
 function renderShell(root) {
   root.innerHTML = `
-    <div class="space-y-5">
-      <!-- One-time Created Key Alert -->
-      <section id="newKeyBanner" class="hidden rounded-xl border-2 border-emerald-500/60 bg-emerald-950/40 p-4 shadow-lg">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <div class="min-w-0 flex-1">
-            <p class="text-[11px] font-semibold uppercase tracking-wider text-emerald-300">
-              Yeni Burner Key Oluşturuldu (Tek seferlik gösterim — şimdi kopyalayın)
-            </p>
-            <code id="newKeyValue" class="mt-1.5 block truncate rounded-lg border border-emerald-500/30 bg-slate-950 px-3 py-2 font-mono text-xs font-bold text-emerald-300"></code>
-          </div>
-          <div class="flex items-center gap-2">
-            <button id="copyNewKeyBtn" type="button" class="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500 transition">
-              Kopyala
-            </button>
-            <button id="sendToSimBtn" type="button" class="rounded-lg border border-sky-500/40 bg-sky-500/15 px-3 py-2 text-xs font-semibold text-sky-300 hover:bg-sky-500/25 transition">
-              Simülatöre Gönder →
-            </button>
-            <button id="closeBannerBtn" type="button" class="rounded-lg border border-slate-700 px-2.5 py-2 text-xs text-slate-300 hover:bg-slate-800">
-              Kapat
-            </button>
-          </div>
-        </div>
-      </section>
+    <div class="dash">
+      <section class="panel">
+        <header class="panel-head">
+          <span><span class="idx">01</span>Anahtar Üret</span>
+          <span class="muted">POST /admin/keys</span>
+        </header>
 
-      <!-- Create Key Form -->
-      <section class="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
-        <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-200 mb-3">
-          Yeni Geçici Anahtar Üret
-        </h2>
+        <form id="createKeyForm" class="panel-body pad" autocomplete="off">
+          <div class="field">
+            <label class="label" for="keyName">Etiket / Uygulama</label>
+            <input id="keyName" class="input" type="text" required maxlength="80" value="Cursor BYOK Demo" />
+          </div>
 
-        <form id="createKeyForm" class="space-y-3 text-xs">
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <label class="block text-slate-400 mb-1">Uygulama / Anahtar Adı</label>
-              <input
-                id="keyName"
-                type="text"
-                required
-                value="Cursor BYOK Demo"
-                class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 focus:border-emerald-500 focus:outline-none"
-              />
-            </div>
-            <div>
-              <label class="block text-slate-400 mb-1">Bütçe Limiti ($)</label>
-              <input
-                id="budgetLimit"
-                type="number"
-                step="0.001"
-                min="0.0001"
-                required
-                value="0.005"
-                class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-slate-100 focus:border-emerald-500 focus:outline-none"
-              />
-            </div>
-            <div>
-              <label class="block text-slate-400 mb-1">Süre / TTL (Dakika)</label>
-              <input
-                id="ttlMinutes"
-                type="number"
-                min="1"
-                required
-                value="60"
-                class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-slate-100 focus:border-emerald-500 focus:outline-none"
-              />
+          <div class="field">
+            <div class="label"><span>Kasa (Master Key)</span></div>
+            <div id="vaultList" class="opts one">
+              <div class="opt"><span class="txt muted">Yükleniyor…</span></div>
             </div>
           </div>
 
-          <div>
-            <label class="block text-slate-400 mb-1.5">İzinli Claude Modelleri</label>
-            <div id="modelsContainer" class="flex flex-wrap gap-2"></div>
+          <div class="field">
+            <div class="label"><span>Süre (TTL)</span><b id="ttlReadout"></b></div>
+            <div id="ttlSeg" class="seg full" role="group" aria-label="Süre">
+              ${segButtons(TTL_OPTIONS, state.ttl)}
+            </div>
           </div>
 
-          <div class="flex items-center justify-between gap-3 pt-1">
-            <p id="formError" class="hidden text-rose-400 text-xs"></p>
-            <button
-              type="submit"
-              class="ml-auto rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 transition shadow"
-            >
-              + Burner Key Oluştur
-            </button>
+          <div class="field">
+            <div class="label"><span>Kota (USD)</span><b id="quotaReadout"></b></div>
+            <div id="quotaSeg" class="seg full" role="group" aria-label="Kota">
+              ${segButtons(QUOTA_OPTIONS, state.budget)}
+            </div>
           </div>
+
+          <div class="field">
+            <div class="label"><span>İzinli Modeller</span><b id="modelCount">0 seçili</b></div>
+            <div id="modelsContainer" class="opts">
+              <div class="opt"><span class="txt muted">Yükleniyor…</span></div>
+            </div>
+          </div>
+
+          <p id="formError" class="form-error" hidden></p>
+
+          <button id="createKeyBtn" type="submit" class="btn-primary">
+            <span>ANAHTAR ÜRET</span><span aria-hidden="true">↵</span>
+          </button>
+
+          <section id="newKeyBanner" class="reveal" hidden>
+            <div class="reveal-head">
+              <span>TEK SEFERLİK · ŞİMDİ KOPYALA</span>
+              <button id="closeBannerBtn" type="button" aria-label="Kapat">×</button>
+            </div>
+            <code id="newKeyValue" class="reveal-key"></code>
+            <div class="seg full">
+              <button id="copyNewKeyBtn" type="button">Kopyala</button>
+              <button id="sendToSimBtn" type="button">Simülatöre →</button>
+            </div>
+          </section>
         </form>
       </section>
 
-      <!-- Keys Table -->
-      <section class="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-200">
-            Aktif ve Geçmiş Anahtarlar
-          </h2>
-          <span id="keyCount" class="rounded-full bg-slate-800 px-2.5 py-0.5 text-[11px] text-slate-300">
-            0 anahtar
-          </span>
-        </div>
+      <div class="dash-right">
+        <section class="panel">
+          <header class="panel-head">
+            <span><span class="idx">02</span>Anahtarlar</span>
+            <div id="keyFilter" class="seg" role="group" aria-label="Filtre">
+              <button type="button" data-val="active" aria-pressed="true">Aktif <span id="countActive">0</span></button>
+              <button type="button" data-val="all" aria-pressed="false">Tümü <span id="countAll">0</span></button>
+            </div>
+          </header>
+          <div class="panel-body">
+            <table class="tbl">
+              <thead>
+                <tr>
+                  <th>Anahtar</th>
+                  <th>Modeller</th>
+                  <th>Kota</th>
+                  <th class="r">İst.</th>
+                  <th>Kalan</th>
+                  <th class="r">Kill Switch</th>
+                </tr>
+              </thead>
+              <tbody id="keysTableBody">
+                <tr class="empty"><td colspan="6">YÜKLENİYOR…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
 
-        <div class="overflow-x-auto custom-scroll">
-          <table class="w-full text-left text-xs">
-            <thead>
-              <tr class="border-b border-slate-800 text-slate-400">
-                <th class="py-2 pr-3 font-medium">Ad / Önizleme</th>
-                <th class="py-2 pr-3 font-medium">Durum</th>
-                <th class="py-2 pr-3 font-medium w-44">Harcama / Bütçe</th>
-                <th class="py-2 pr-3 font-medium">İstek</th>
-                <th class="py-2 pr-3 font-medium">Modeller</th>
-                <th class="py-2 font-medium text-right">Kill Switch</th>
-              </tr>
-            </thead>
-            <tbody id="keysTableBody" class="divide-y divide-slate-800/70">
-              <tr><td colspan="6" class="py-6 text-center text-slate-500">Yükleniyor...</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- Live Logs -->
-      <section class="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-200">
-            Canlı Proxy Logları
-          </h2>
-          <span class="text-[11px] text-slate-400">2 sn otomatik yenileme</span>
-        </div>
-
-        <div class="overflow-x-auto custom-scroll max-h-64">
-          <table class="w-full text-left text-xs">
-            <thead>
-              <tr class="border-b border-slate-800 text-slate-400">
-                <th class="py-2 pr-3 font-medium">Saat</th>
-                <th class="py-2 pr-3 font-medium">Anahtar</th>
-                <th class="py-2 pr-3 font-medium">Model</th>
-                <th class="py-2 pr-3 font-medium">Durum</th>
-                <th class="py-2 pr-3 font-medium">Token</th>
-                <th class="py-2 pr-3 font-medium">Maliyet</th>
-                <th class="py-2 font-medium">Detay</th>
-              </tr>
-            </thead>
-            <tbody id="logsTableBody" class="divide-y divide-slate-800/70">
-              <tr><td colspan="7" class="py-5 text-center text-slate-500">Henüz istek yok.</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+        <section class="panel">
+          <header class="panel-head">
+            <span><span class="idx">03</span>Canlı Log</span>
+            <span class="muted">GET /admin/logs · 2s</span>
+          </header>
+          <div class="panel-body">
+            <table class="tbl">
+              <thead>
+                <tr>
+                  <th>Saat</th>
+                  <th>Anahtar</th>
+                  <th>Model</th>
+                  <th>Kod</th>
+                  <th class="r">Token</th>
+                  <th class="r">Maliyet</th>
+                  <th>Detay</th>
+                </tr>
+              </thead>
+              <tbody id="logsTableBody">
+                <tr class="empty"><td colspan="7">HENÜZ İSTEK YOK</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
     </div>
   `;
 }
 
-function renderKeys(keys) {
-  document.getElementById("keyCount").textContent = `${keys.length} anahtar`;
-  const tbody = document.getElementById("keysTableBody");
+function updateReadouts() {
+  document.getElementById("ttlReadout").textContent = `${state.ttl} DK`;
+  document.getElementById("quotaReadout").textContent = `$${state.budget.toFixed(3)}`;
+}
 
-  if (!keys.length) {
-    tbody.innerHTML = `
-      <tr>
-        <td colspan="6" class="py-6 text-center text-slate-500">
-          Henüz burner key yok. Yukarıdaki formdan ilk anahtarı oluşturun.
-        </td>
-      </tr>
-    `;
+function bindSeg(id, onPick) {
+  const seg = document.getElementById(id);
+  seg.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-val]");
+    if (!btn) return;
+    seg.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
+    onPick(btn.dataset.val);
+  });
+}
+
+/* ---------- Keys ---------- */
+
+function statusCell(k) {
+  if (k.status === "active") {
+    return `<span class="live-dot" aria-hidden="true"></span><span class="ttl" data-expires="${escapeHtml(
+      k.expires_at
+    )}"></span>`;
+  }
+  const map = {
+    revoked: ["st st-burned", "BURNED"],
+    expired: ["st st-dead", "EXPIRED"],
+    budget_exceeded: ["st st-quota", "QUOTA"],
+  };
+  const [cls, label] = map[k.status] || ["st st-dead", String(k.status).toUpperCase()];
+  return `<span class="${cls}">${escapeHtml(label)}</span>`;
+}
+
+function burnButton(k) {
+  if (k.is_revoked) {
+    return `<button class="burn" type="button" disabled><span>BURNED</span></button>`;
+  }
+  if (state.burningId === k.id) {
+    return `<button class="burn confirm" type="button" disabled><span>BURNING…</span></button>`;
+  }
+  if (state.pendingBurnId === k.id) {
+    return `<button class="burn confirm" type="button" data-burn-id="${k.id}"><span>CONFIRM BURN?</span></button>`;
+  }
+  return `<button class="burn" type="button" data-burn-id="${k.id}" aria-label="${escapeHtml(
+    k.name
+  )} anahtarını yak"><span>BURN</span></button>`;
+}
+
+function rowHtml(k) {
+  const budget = Math.max(Number(k.budget_limit_usd) || 0, 0.000001);
+  const spent = Number(k.spent_usd) || 0;
+  const pct = Math.min(100, (spent / budget) * 100);
+  let on = Math.round((pct / 100) * METER_CELLS);
+  if (spent > 0 && on === 0) on = 1;
+  const cells = Array.from({ length: METER_CELLS }, (_, i) => `<i class="${i < on ? "on" : ""}"></i>`).join("");
+  const provider = k.provider ? ` · ${escapeHtml(String(k.provider).toUpperCase())}` : "";
+
+  return `
+    <td>
+      <div class="k-name"><span class="k-id">#${String(k.id).padStart(3, "0")}</span><span class="k-name-text">${escapeHtml(
+        k.name
+      )}</span></div>
+      <div class="sub">${escapeHtml(k.key_preview)}${provider}</div>
+    </td>
+    <td><div class="tags">${(k.allowed_models || []).map((m) => escapeHtml(modelLabel(m))).join("<br>")}</div></td>
+    <td class="nowrap">
+      <div class="meter ${pct >= 80 ? "hot" : ""}" title="%${pct.toFixed(1)}">${cells}</div>
+      <div class="sub">$${spent.toFixed(4)} / $${budget.toFixed(4)} · ${String(Math.round(pct)).padStart(3, " ")}%</div>
+    </td>
+    <td class="r mono num">${Number(k.request_count) || 0}</td>
+    <td class="nowrap">${statusCell(k)}</td>
+    <td class="r">${burnButton(k)}</td>
+  `;
+}
+
+function sortedKeys() {
+  const list = state.filter === "active" ? state.keys.filter((k) => k.status === "active") : state.keys.slice();
+  return list.sort((a, b) => {
+    const aa = a.status === "active" ? 0 : 1;
+    const bb = b.status === "active" ? 0 : 1;
+    return aa - bb || b.id - a.id;
+  });
+}
+
+function renderKeys() {
+  const activeCount = state.keys.filter((k) => k.status === "active").length;
+  document.getElementById("countActive").textContent = activeCount;
+  document.getElementById("countAll").textContent = state.keys.length;
+
+  const tbody = document.getElementById("keysTableBody");
+  const list = sortedKeys();
+
+  if (!list.length) {
+    rowSigs.clear();
+    tbody.innerHTML = `<tr class="empty"><td colspan="6">${
+      state.keys.length ? "AKTİF ANAHTAR YOK · TÜMÜ SEKMESİNE BAKIN" : "HENÜZ ANAHTAR YOK · SOLDAN ÜRETİN"
+    }</td></tr>`;
     return;
   }
 
-  tbody.innerHTML = keys
-    .map((k) => {
-      const pct = Math.min(100, (k.spent_usd / Math.max(k.budget_limit_usd, 0.000001)) * 100);
-      const barColor =
-        pct >= 80 ? "bg-rose-500" : pct >= 60 ? "bg-amber-500" : "bg-emerald-500";
-      const nearLimitBadge =
-        pct >= 80 && k.status === "active"
-          ? `<span class="ml-1 rounded bg-amber-500/20 px-1 py-0.5 text-[10px] text-amber-300">%80+</span>`
-          : "";
+  tbody.querySelectorAll("tr.empty").forEach((tr) => tr.remove());
 
-      return `
-        <tr class="hover:bg-slate-800/30">
-          <td class="py-2.5 pr-3">
-            <div class="font-semibold text-slate-100">${escapeHtml(k.name)}</div>
-            <div class="font-mono text-[11px] text-slate-400">${escapeHtml(k.key_preview)}</div>
-            <div class="text-[10px] text-slate-500">Bitiş: ${formatTime(k.expires_at)}</div>
-          </td>
-          <td class="py-2.5 pr-3">
-            <span class="inline-block rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
-              STATUS_STYLES[k.status] || STATUS_STYLES.active
-            }">
-              ${STATUS_LABELS[k.status] || escapeHtml(k.status)}
-            </span>
-          </td>
-          <td class="py-2.5 pr-3">
-            <div class="flex justify-between font-mono text-[11px] mb-1">
-              <span>$${Number(k.spent_usd).toFixed(4)}</span>
-              <span class="text-slate-400">/ $${Number(k.budget_limit_usd).toFixed(4)}${nearLimitBadge}</span>
-            </div>
-            <div class="h-2 w-full rounded-full bg-slate-800 overflow-hidden">
-              <div class="h-full ${barColor} transition-all duration-300" style="width: ${pct}%"></div>
-            </div>
-          </td>
-          <td class="py-2.5 pr-3 font-mono text-slate-300">${k.request_count}</td>
-          <td class="py-2.5 pr-3">
-            <div class="flex flex-wrap gap-1">
-              ${k.allowed_models
-                .map(
-                  (m) =>
-                    `<span class="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">${escapeHtml(
-                      m.replace(/-\d{8}$/, "")
-                    )}</span>`
-                )
-                .join("")}
-            </div>
-          </td>
-          <td class="py-2.5 text-right">
-            <button
-              data-revoke-id="${k.id}"
-              ${k.is_revoked ? "disabled" : ""}
-              class="rounded-lg border border-rose-500/40 bg-rose-600/90 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-rose-500 disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-not-allowed transition"
-            >
-              ${k.is_revoked ? "Yakıldı" : "İptal Et"}
-            </button>
-          </td>
-        </tr>
-      `;
-    })
-    .join("");
+  // Update rows in place so hover, focus and the BURN confirm state survive the 2s refresh.
+  const wanted = new Set(list.map((k) => String(k.id)));
+  tbody.querySelectorAll("tr[data-id]").forEach((tr) => {
+    if (!wanted.has(tr.dataset.id)) {
+      rowSigs.delete(tr.dataset.id);
+      tr.remove();
+    }
+  });
+
+  const rows = list.map((k) => {
+    const id = String(k.id);
+    let tr = tbody.querySelector(`tr[data-id="${id}"]`);
+    if (!tr) {
+      tr = document.createElement("tr");
+      tr.dataset.id = id;
+    }
+    const html = rowHtml(k);
+    if (rowSigs.get(id) !== html) {
+      tr.innerHTML = html;
+      rowSigs.set(id, html);
+    }
+    tr.classList.toggle("is-dead", k.status !== "active");
+    return tr;
+  });
+
+  const current = Array.from(tbody.children);
+  const sameOrder = current.length === rows.length && rows.every((tr, i) => current[i] === tr);
+  if (!sameOrder) rows.forEach((tr) => tbody.appendChild(tr));
+
+  tickCountdowns();
 }
 
+function tickCountdowns() {
+  const now = Date.now();
+  document.querySelectorAll("#keysTableBody .ttl[data-expires]").forEach((el) => {
+    const left = new Date(el.dataset.expires).getTime() - now;
+    const text = formatCountdown(left);
+    if (el.textContent !== text) el.textContent = text;
+    el.classList.toggle("low", left <= 60_000);
+  });
+}
+
+/* ---------- Logs ---------- */
+
 function renderLogs(logs) {
+  const sig = JSON.stringify(logs);
+  if (sig === state.logsSig) return;
+  state.logsSig = sig;
+
   const tbody = document.getElementById("logsTableBody");
   if (!logs.length) {
-    tbody.innerHTML = `
-      <tr><td colspan="7" class="py-5 text-center text-slate-500">Henüz istek kaydı yok.</td></tr>
-    `;
+    tbody.innerHTML = `<tr class="empty"><td colspan="7">HENÜZ İSTEK YOK</td></tr>`;
     return;
   }
 
   tbody.innerHTML = logs
     .map((log) => {
-      const ok = log.status_code === 200;
+      const ok = log.status_code >= 200 && log.status_code < 300;
       return `
-        <tr class="hover:bg-slate-800/30">
-          <td class="py-2 pr-3 font-mono text-slate-400">${formatTime(log.created_at)}</td>
-          <td class="py-2 pr-3 text-slate-200">${escapeHtml(log.burner_key_name || "-")}</td>
-          <td class="py-2 pr-3 font-mono text-slate-300">${escapeHtml(log.model || "-")}</td>
-          <td class="py-2 pr-3">
-            <span class="rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold ${
-              ok ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300"
-            }">
-              ${log.status_code}
-            </span>
-          </td>
-          <td class="py-2 pr-3 font-mono text-slate-400">${log.input_tokens}/${log.output_tokens}</td>
-          <td class="py-2 pr-3 font-mono text-slate-300">$${Number(log.cost_usd).toFixed(5)}</td>
-          <td class="py-2 text-slate-400">${escapeHtml(log.error_message || "OK")}</td>
+        <tr>
+          <td class="mono nowrap muted">${formatTime(log.created_at)}</td>
+          <td class="nowrap">${escapeHtml(log.burner_key_name || "-")}</td>
+          <td class="mono nowrap">${escapeHtml(log.model ? modelLabel(log.model) : "-")}</td>
+          <td><span class="code ${ok ? "" : "err"}">${escapeHtml(log.status_code)}</span></td>
+          <td class="r mono nowrap">${Number(log.input_tokens) || 0}/${Number(log.output_tokens) || 0}</td>
+          <td class="r mono nowrap">$${Number(log.cost_usd || 0).toFixed(5)}</td>
+          <td class="${ok ? "muted" : ""}">${escapeHtml(log.error_message || "OK")}</td>
         </tr>
       `;
     })
     .join("");
 }
 
+/* ---------- Init ---------- */
+
 export async function initDashboard() {
   const root = document.getElementById("dashboard-root");
   if (!root) return;
   renderShell(root);
+  updateReadouts();
 
   let latestCreatedKey = "";
 
+  bindSeg("ttlSeg", (v) => {
+    state.ttl = Number(v);
+    updateReadouts();
+  });
+  bindSeg("quotaSeg", (v) => {
+    state.budget = Number(v);
+    updateReadouts();
+  });
+  bindSeg("keyFilter", (v) => {
+    state.filter = v;
+    renderKeys();
+  });
+
+  function updateModelCount() {
+    const n = document.querySelectorAll('input[name="allowed_model"]:checked').length;
+    document.getElementById("modelCount").textContent = `${n} seçili`;
+  }
+
   async function loadModels() {
+    const container = document.getElementById("modelsContainer");
     try {
       const models = await fetchModels();
-      const container = document.getElementById("modelsContainer");
       container.innerHTML = models
         .map(
           (m, idx) => `
-          <label class="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 cursor-pointer hover:border-slate-500">
-            <input
-              type="checkbox"
-              name="allowed_model"
-              value="${escapeHtml(m)}"
-              ${idx === 0 ? "checked" : ""}
-              class="rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-0"
-            />
-            <span class="font-mono text-[11px] text-slate-200">${escapeHtml(m)}</span>
-          </label>
-        `
+          <label class="opt" title="${escapeHtml(m)}">
+            <input type="checkbox" name="allowed_model" value="${escapeHtml(m)}" ${idx === 0 ? "checked" : ""} />
+            <span class="box" aria-hidden="true"></span>
+            <span class="txt">${escapeHtml(modelLabel(m))}</span>
+          </label>`
         )
         .join("");
     } catch {
-      document.getElementById("modelsContainer").innerHTML =
-        `<span class="text-rose-400">Model listesi yüklenemedi (Backend kapalı olabilir).</span>`;
+      container.innerHTML = `<div class="opt"><span class="txt muted">Model listesi yüklenemedi</span></div>`;
+    }
+    updateModelCount();
+  }
+
+  async function loadVaults() {
+    const container = document.getElementById("vaultList");
+    try {
+      const vaults = await fetchMasterKeys();
+      if (!vaults.length) {
+        container.innerHTML = `<div class="opt"><span class="txt muted">Kasa yok · varsayılan kullanılacak</span></div>`;
+        return;
+      }
+      container.innerHTML = vaults
+        .map(
+          (v, idx) => `
+          <label class="opt" title="${escapeHtml(v.base_url || "")}">
+            <input type="radio" name="vault" value="${v.id}" ${idx === 0 ? "checked" : ""} />
+            <span class="box" aria-hidden="true"></span>
+            <span class="txt">${escapeHtml(v.name)}</span>
+            <span class="end">${escapeHtml(v.provider)}</span>
+          </label>`
+        )
+        .join("");
+    } catch {
+      container.innerHTML = `<div class="opt"><span class="txt muted">Kasa listesi yüklenemedi</span></div>`;
     }
   }
 
   async function refresh() {
     try {
       const [keys, logs] = await Promise.all([fetchKeys(), fetchLogs(30)]);
-      renderKeys(keys);
+      state.keys = keys;
+      renderKeys();
       renderLogs(logs);
     } catch (err) {
       console.error("Dashboard refresh error:", err);
     }
   }
 
+  document.getElementById("modelsContainer").addEventListener("change", updateModelCount);
+
   document.getElementById("createKeyForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const errEl = document.getElementById("formError");
-    errEl.classList.add("hidden");
+    const btn = document.getElementById("createKeyBtn");
+    errEl.hidden = true;
 
-    const checkedModels = Array.from(
-      document.querySelectorAll('input[name="allowed_model"]:checked')
-    ).map((el) => el.value);
-
+    const checkedModels = Array.from(document.querySelectorAll('input[name="allowed_model"]:checked')).map(
+      (el) => el.value
+    );
     if (!checkedModels.length) {
-      errEl.textContent = "En az bir model seçmelisiniz.";
-      errEl.classList.remove("hidden");
+      errEl.textContent = "EN AZ BİR MODEL SEÇİN";
+      errEl.hidden = false;
       return;
     }
 
+    const vault = document.querySelector('input[name="vault"]:checked');
+    btn.disabled = true;
     try {
       const created = await createKey({
-        name: document.getElementById("keyName").value,
-        budget_limit_usd: Number(document.getElementById("budgetLimit").value),
-        ttl_minutes: Number(document.getElementById("ttlMinutes").value),
+        name: document.getElementById("keyName").value.trim() || "Burner Key",
+        budget_limit_usd: state.budget,
+        ttl_minutes: state.ttl,
         allowed_models: checkedModels,
+        master_key_id: vault ? Number(vault.value) : null,
       });
 
       latestCreatedKey = created.api_key;
       document.getElementById("newKeyValue").textContent = latestCreatedKey;
-      document.getElementById("newKeyBanner").classList.remove("hidden");
-      window.dispatchEvent(
-        new CustomEvent("burner:select-key", { detail: { apiKey: latestCreatedKey } })
-      );
+      document.getElementById("newKeyBanner").hidden = false;
+      window.dispatchEvent(new CustomEvent("burner:select-key", { detail: { apiKey: latestCreatedKey } }));
       await refresh();
     } catch (err) {
-      errEl.textContent = err.message || "Anahtar oluşturulamadı.";
-      errEl.classList.remove("hidden");
+      errEl.textContent = (err.message || "Anahtar oluşturulamadı").toUpperCase();
+      errEl.hidden = false;
+    } finally {
+      btn.disabled = false;
     }
   });
 
-  document.getElementById("copyNewKeyBtn").addEventListener("click", async () => {
+  document.getElementById("copyNewKeyBtn").addEventListener("click", async (e) => {
     if (!latestCreatedKey) return;
-    await navigator.clipboard.writeText(latestCreatedKey);
-    const btn = document.getElementById("copyNewKeyBtn");
-    btn.textContent = "Kopyalandı!";
+    const btn = e.currentTarget;
+    try {
+      await navigator.clipboard.writeText(latestCreatedKey);
+      btn.textContent = "Kopyalandı";
+    } catch {
+      btn.textContent = "Kopyalanamadı";
+    }
     setTimeout(() => (btn.textContent = "Kopyala"), 1500);
   });
 
   document.getElementById("sendToSimBtn").addEventListener("click", () => {
     if (!latestCreatedKey) return;
-    window.dispatchEvent(
-      new CustomEvent("burner:select-key", { detail: { apiKey: latestCreatedKey } })
-    );
+    window.dispatchEvent(new CustomEvent("burner:select-key", { detail: { apiKey: latestCreatedKey } }));
   });
 
   document.getElementById("closeBannerBtn").addEventListener("click", () => {
-    document.getElementById("newKeyBanner").classList.add("hidden");
+    document.getElementById("newKeyBanner").hidden = true;
   });
 
+  // BURN: first click arms (CONFIRM BURN?), second click within 3s revokes.
   document.getElementById("keysTableBody").addEventListener("click", async (e) => {
-    const btn = e.target.closest("button[data-revoke-id]");
+    const btn = e.target.closest("button[data-burn-id]");
     if (!btn || btn.disabled) return;
-    const id = Number(btn.dataset.revokeId);
-    await revokeKey(id);
-    await refresh();
+    const id = Number(btn.dataset.burnId);
+    clearTimeout(state.burnTimer);
+
+    if (state.pendingBurnId !== id) {
+      state.pendingBurnId = id;
+      state.burnTimer = setTimeout(() => {
+        state.pendingBurnId = null;
+        renderKeys();
+      }, BURN_CONFIRM_MS);
+      renderKeys();
+      return;
+    }
+
+    state.pendingBurnId = null;
+    state.burningId = id;
+    renderKeys();
+    try {
+      await revokeKey(id);
+    } catch (err) {
+      console.error("Revoke failed:", err);
+    } finally {
+      state.burningId = null;
+      await refresh();
+    }
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && state.pendingBurnId !== null) {
+      clearTimeout(state.burnTimer);
+      state.pendingBurnId = null;
+      renderKeys();
+    }
   });
 
   window.addEventListener("burner:activity", refresh);
 
-  await loadModels();
+  await Promise.all([loadModels(), loadVaults()]);
   await refresh();
   setInterval(refresh, 2000);
+  setInterval(tickCountdowns, 1000);
 }
